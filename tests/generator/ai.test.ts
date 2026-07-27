@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { generateAICommit, truncateDiff } from '../../src/generator/ai.js';
+import { generateAICommit } from '../../src/generator/ai.js';
+import { processGitDiff } from '../../src/generator/diffProcessor.js';
 import type { SimpleGit } from 'simple-git';
 import type { Config } from '../../src/config/defaultConfig.js';
 
@@ -79,50 +80,32 @@ describe('generateAICommit', () => {
   });
 });
 
-describe('truncateDiff', () => {
-  it('should return the original diff if it is within budget', () => {
-    const diff = 'diff --git a/file1 b/file1\nsome changes';
-    expect(truncateDiff(diff, 100)).toBe(diff);
+describe('processGitDiff', () => {
+  it('should return original diff if within budget', () => {
+    const diff = 'diff --git a/file1.ts b/file1.ts\n+added line';
+    expect(processGitDiff(diff, { maxTotalChars: 100 })).toContain('diff --git a/file1.ts b/file1.ts');
   });
 
-  it('should truncate on file boundaries and append summary if budget is exceeded', () => {
-    const file1 = 'diff --git a/file1 b/file1\ncontent 1'; // length 34
-    const file2 = 'diff --git a/file2 b/file2\ncontent 2'; // length 34
-    const file3 = 'diff --git a/file3 b/file3\ncontent 3'; // length 34
-    const diff = file1 + file2 + file3; // length 102
-    
-    // For budget = 80:
-    // candidate with file1 + file2 + '\n\n... 1 more files changed, not shown' (length 37)
-    // = 34 + 34 + 37 = 105 > 80.
-    // candidate with file1 + '\n\n... 2 more files changed, not shown' (length 38)
-    // = 34 + 38 = 72 <= 80.
-    // So only file1 fits.
-    const result = truncateDiff(diff, 80);
-    expect(result).toBe(file1 + '\n\n... 2 more files changed, not shown');
+  it('should skip lockfiles when ignoreLocks is true', () => {
+    const diff = 'diff --git a/package-lock.json b/package-lock.json\n+changes\ndiff --git a/file.ts b/file.ts\n+code';
+    const result = processGitDiff(diff, { ignoreLocks: true });
+    expect(result).not.toContain('package-lock.json');
+    expect(result).toContain('file.ts');
   });
 
-  it('should slice the first file if even it does not fit the budget', () => {
-    const file1 = 'diff --git a/file1 b/file1\nvery long content'; // length 42
-    const file2 = 'diff --git a/file2 b/file2\ncontent 2';
+  it('should skip binary files by extension', () => {
+    const diff = 'diff --git a/logo.png b/logo.png\nbinary\ndiff --git a/file.ts b/file.ts\n+code';
+    const result = processGitDiff(diff, { ignoredExts: ['.png'] });
+    expect(result).not.toContain('logo.png');
+    expect(result).toContain('file.ts');
+  });
+
+  it('should omit files when exceeding budget', () => {
+    const file1 = 'diff --git a/file1.ts b/file1.ts\n' + 'x'.repeat(5000);
+    const file2 = 'diff --git a/file2.ts b/file2.ts\n' + 'y'.repeat(5000);
     const diff = file1 + file2;
-
-    // Budget = 30
-    // Suffix for 1 remaining file is `\n\n... 1 more files changed, not shown` (length 37)
-    // Since total length budget (30) < suffix length (37), availableBudget = 30 - 37 = -7 -> 0.
-    // So it should slice to 0 and append suffix.
-    expect(truncateDiff(diff, 30)).toBe('\n\n... 1 more files changed, not shown');
-
-    // Budget = 40
-    // Suffix length = 37. availableBudget = 40 - 37 = 3.
-    // Expected result: file1.slice(0, 3) + suffix.
-    expect(truncateDiff(diff, 40)).toBe(file1.slice(0, 3) + '\n\n... 1 more files changed, not shown');
-  });
-
-  it('should slice the single file if it is the only file and exceeds the budget', () => {
-    const file1 = 'diff --git a/file1 b/file1\nvery long content'; // length 42
-    
-    // Budget = 30, only 1 file, no suffix needed because it is the last file
-    expect(truncateDiff(file1, 30)).toBe(file1.slice(0, 30));
+    const result = processGitDiff(diff, { maxTotalChars: 6000 });
+    expect(result).toContain('omitted to fit token budget');
   });
 });
 

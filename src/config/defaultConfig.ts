@@ -11,6 +11,12 @@ export interface Config {
         scopes?: string[];
         requireScope?: boolean;
     }
+
+    diffProcessor?: {
+        maxTotalChars?: number;
+        ignoredExts?: string[];
+        ignoreLocks?: boolean;
+    }
 }
 
 export const defaultConfig: Config = {
@@ -22,5 +28,10 @@ export const defaultConfig: Config = {
         minLength: 10,
         types: ['feat', 'fix', 'docs', 'style', 'refactor', 'test', 'chore', 'ci'],
         requireScope: false
+    },
+    diffProcessor: {
+        maxTotalChars: 8000,
+        ignoredExts: ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.pdf', '.zip', '.tar', '.gz', '.wasm', '.mp4'],
+        ignoreLocks: true
     }
 }
