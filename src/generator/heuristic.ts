@@ -4,6 +4,7 @@ export interface HeuristicResult {
   type: string;
   scope?: string | undefined;
   description: string;
+  body?: string;
   confidence: 'low' | 'medium' | 'high';
 }
 

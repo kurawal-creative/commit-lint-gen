@@ -1,11 +1,13 @@
 import type { SimpleGit } from "simple-git";
 import type { Config } from "../config/defaultConfig.js";
 import { createAIProvider } from "./provider.js";
+import { processGitDiff } from "./diffProcessor.js";
 
 export interface AIResult {
     type: string;
     scope?: string;
     description: string;
+    body?: string;
 }
 
 export async function generateAICommit(git: SimpleGit, config: Config, previousMessage?: string): Promise<AIResult> {
@@ -22,24 +24,71 @@ export async function generateAICommit(git: SimpleGit, config: Config, previousM
         throw new Error('No staged changes found. Please stage your changes with `git add` first.');
     }
 
-    const prompt = `Analyze this git diff and generate a conventional commit message.
+    const processedDiff = processGitDiff(diff, config.diffProcessor);
 
-Output format - MUST be valid JSON only, no markdown, no explanations, no thinking tags:
+    const prompt = `Analyze this git diff and generate a conventional commit message following caveman-commit style.
+
+Output format - MUST be valid JSON only:
 {
   "type": "feat",
   "scope": "auth",
-  "description": "add user login functionality"
+  "description": "add user authentication",
+  "body": "Prevents unauthorized access to protected routes\\n- Adds JWT token validation\\n- Implements session expiry"
 }
 
-Rules:
-- type: One of [feat, fix, docs, style, refactor, test, chore, ci]
-- scope: Optional, the area affected (e.g., "api", "auth", "ui")
-- description: Short imperative phrase (e.g., "add feature" not "added" or "adds")
-${previousMessage ? `- Do NOT reuse or slightly rephrase this previous message: "${previousMessage}". Use a different description.` : ''}
-Git diff:
-${truncateDiff(diff, 8000)}
+CRITICAL RULES:
+1. Subject line (type + scope + description):
+   - ≤50 chars total when possible, hard cap 72
+   - Imperative mood: "add", "fix", "remove" — NOT "added/adds/adding"
+   - Terse but clear: "add login" not "add user login functionality"
+   - No fluff: "now", "currently", "this commit", "functionality"
+   
+2. Type: [feat, fix, refactor, perf, docs, test, chore, build, ci, style, revert]
 
-Output the JSON object only:`;
+3. Scope: Optional, affected area (api, auth, ui, config, generator, etc)
+
+4. Body (ONLY include if needed):
+   - Skip entirely when subject is self-explanatory
+   - Add ONLY for: non-obvious WHY, breaking changes, migration notes, complex multi-part changes
+   - Focus on WHY over WHAT (diff shows what)
+   - Use bullets with "-" for lists
+   - Wrap at 72 chars per line
+   - Use \\n for line breaks in JSON string
+   
+5. Body examples when needed:
+   - Large refactor: explain architectural reason
+   - Performance fix: explain bottleneck solved
+   - Breaking change: explain migration path
+   - Complex feature: explain key parts and rationale
+   
+6. Body examples to SKIP:
+   - Simple addition/deletion (subject says it all)
+   - Obvious bug fix (subject + diff clear)
+   - Single file change with clear purpose
+
+${previousMessage ? `7. MUST differ significantly from previous: "${previousMessage}"` : ''}
+
+Examples:
+
+Simple (no body needed):
+{
+  "type": "fix",
+  "scope": "auth",
+  "description": "resolve token expiry race"
+}
+
+Complex (body explains why):
+{
+  "type": "feat",
+  "scope": "generator",
+  "description": "add intelligent diff processor",
+  "body": "Reduces AI token usage by filtering noise from git diffs:\\n- Skips lockfiles and binary assets (png, pdf, zip)\\n- Strips verbose git metadata (index, ---, +++)\\n- Extracts function context from hunk headers\\n- Enforces 8k char budget per-file with omit counter\\n\\nReplaces naive truncateDiff with configurable processor."
+}
+
+Git diff:
+${processedDiff}
+
+Output valid JSON only:`;
 
     const isGroq = config.aiProvider === 'groq';
 
@@ -67,15 +116,12 @@ Output the JSON object only:`;
     }
 
     try {
-        // Clean up the response - remove markdown code blocks, thinking tags, and extra text
         let cleaned = content.trim();
 
-        // Remove markdown code blocks
         cleaned = cleaned.replace(/```json?\n?/g, '').replace(/```\n?/g, '');
 
         cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/g, '');
 
-        // Try to extract JSON object if there's surrounding text
         const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
             cleaned = jsonMatch[0];
@@ -91,45 +137,4 @@ Output the JSON object only:`;
     } catch (error) {
         throw new Error(`Failed to parse AI response: ${error instanceof Error ? error.message : String(error)}`)
     }
-}
-
-export function truncateDiff(diff: string, budget = 8000): string {
-    if (diff.length <= budget) {
-        return diff;
-    }
-
-    const parts = diff.split(/(?=diff --git)/);
-    const totalFiles = parts.length;
-    let accumulated = '';
-    let includedCount = 0;
-
-    for (let i = 0; i < totalFiles; i++) {
-        const part = parts[i] ?? '';
-        const isLast = i === totalFiles - 1;
-        const suffix = isLast ? '' : `\n\n... ${totalFiles - (i + 1)} more files changed, not shown`;
-        const candidate = accumulated + part + suffix;
-
-        if (candidate.length <= budget) {
-            accumulated += part;
-            includedCount++;
-        } else {
-            break;
-        }
-    }
-
-    if (includedCount === 0) {
-        const isLast = totalFiles === 1;
-        const suffix = isLast ? '' : `\n\n... ${totalFiles - 1} more files changed, not shown`;
-        const availableBudget = budget - suffix.length;
-        const firstPart = parts[0] ?? '';
-        const slicedPart = firstPart.slice(0, Math.max(0, availableBudget));
-        return slicedPart + suffix;
-    }
-
-    if (includedCount < totalFiles) {
-        const suffix = `\n\n... ${totalFiles - includedCount} more files changed, not shown`;
-        return accumulated + suffix;
-    }
-
-    return accumulated;
 }

@@ -12,7 +12,8 @@ export function promptCommitAction(message: string, confidence?: string): Promis
         clearScreen();
 
         console.log('\nSuggested commit message:');
-        console.log(`  ${chalk.green(message)}`);
+        const lines = message.split('\n');
+        lines.forEach(line => console.log(`  ${chalk.green(line)}`));
         if (confidence) {
             console.log(chalk.dim(`\nConfidence: ${confidence}`));
         }
