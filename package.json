@@ -1,6 +1,6 @@
 {
   "name": "commitlg",
-  "version": "1.2.6",
+  "version": "1.3.6",
   "description": "A simple git commit generator",
   "packageManager": "pnpm@11.15.0",
   "engines": {
@@ -45,6 +45,7 @@
   "dependencies": {
     "chalk": "^5.6.2",
     "commander": "^15.0.0",
+    "commitlg": "link:",
     "cosmiconfig": "^9.0.2",
     "dotenv": "^17.4.2",
     "openai": "^6.46.0",
