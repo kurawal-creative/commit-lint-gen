@@ -45,7 +45,6 @@
   "dependencies": {
     "chalk": "^5.6.2",
     "commander": "^15.0.0",
-    "commitlg": "link:",
     "cosmiconfig": "^9.0.2",
     "dotenv": "^17.4.2",
     "openai": "^6.46.0",
