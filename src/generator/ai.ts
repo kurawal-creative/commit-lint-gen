@@ -17,6 +17,7 @@ const ALLOWED_TYPES = [
 
 export async function generateAICommit(git: SimpleGit, config: Config, previousMessage?: string): Promise<AIResult> {
     const provider = createAIProvider(config);
+    const language = config.language || 'en';
 
     const isRepo = await git.checkIsRepo();
     if (!isRepo) {
@@ -31,8 +32,7 @@ export async function generateAICommit(git: SimpleGit, config: Config, previousM
 
     const processedDiff = processGitDiff(diff, config.diffProcessor);
 
-    // SYSTEM PROMPT: Menerjemahkan aturan caveman-commit secara terstruktur & ketat untuk model kecil
-    const systemPrompt = `You are a caveman-style commit message generator. Your output MUST be ultra-compressed, exact, and strictly valid JSON.
+    const systemPrompt = `You are a caveman-style commit message generator. Your output MUST be ultra-compressed, exact, and strictly valid JSON.${language === 'id' ? '\n\nIMPORTANT: Write "description" and "body" fields in Bahasa Indonesia.' : ''}
 
 JSON OUTPUT STRUCTURE:
 {

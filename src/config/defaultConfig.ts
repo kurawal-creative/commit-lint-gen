@@ -3,6 +3,7 @@ export interface Config {
     baseURL: string;
     model: string;
     apiKey?: string;
+    language?: 'en' | 'id';
 
     rules?: {
         maxLength?: number;
@@ -23,6 +24,7 @@ export const defaultConfig: Config = {
     aiProvider: 'groq',
     baseURL: 'https://api.groq.com/openai/v1',
     model: 'qwen/qwen3.6-27b',
+    language: 'en',
     rules: {
         maxLength: 100,
         minLength: 10,

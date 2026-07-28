@@ -1,13 +1,13 @@
 import chalk from 'chalk';
 import prompts from 'prompts';
 
-export type CommitAction = 'accept' | 'edit' | 'regenerate' | 'manual' | 'cancel';
+export type CommitAction = 'accept' | 'edit' | 'regenerate' | 'manual' | 'cancel' | 'language';
 
 function clearScreen(): void {
     console.clear();
 }
 
-export function promptCommitAction(message: string, confidence?: string): Promise<CommitAction> {
+export function promptCommitAction(message: string, confidence?: string, currentLang: 'en' | 'id' = 'en'): Promise<CommitAction> {
     return new Promise((resolve) => {
         clearScreen();
 
@@ -17,10 +17,11 @@ export function promptCommitAction(message: string, confidence?: string): Promis
         if (confidence) {
             console.log(chalk.dim(`\nConfidence: ${confidence}`));
         }
+        const langLabel = currentLang === 'en' ? 'ID' : 'EN';
         console.log(
             `\n${chalk.bold('[Enter]')} accept   ${chalk.bold('[e]')} edit   ` +
-            `${chalk.bold('[r]')} regenerate   ${chalk.bold('[m]')} manual mode   ` +
-            `${chalk.bold('[q]')} cancel`
+            `${chalk.bold('[r]')} regenerate   ${chalk.bold('[l]')} switch to ${langLabel}   ` +
+            `${chalk.bold('[m]')} manual mode   ${chalk.bold('[q]')} cancel`
         );
         process.stdout.write('> ');
 
@@ -57,11 +58,14 @@ export function promptCommitAction(message: string, confidence?: string): Promis
             }
 
             const lower = key.toLowerCase();
-            if (lower === 'e' || lower === 'r' || lower === 'm' || lower === 'q') {
+            if (lower === 'e' || lower === 'r' || lower === 'm' || lower === 'q' || lower === 'l') {
                 cleanup();
                 console.log(lower);
                 resolve(
-                    lower === 'e' ? 'edit' : lower === 'r' ? 'regenerate' : lower === 'm' ? 'manual' : 'cancel'
+                    lower === 'e' ? 'edit' : 
+                    lower === 'r' ? 'regenerate' : 
+                    lower === 'l' ? 'language' :
+                    lower === 'm' ? 'manual' : 'cancel'
                 );
                 return;
             }

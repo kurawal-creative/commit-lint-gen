@@ -47,7 +47,6 @@ export async function runInteractiveGenerate(git: SimpleGit, config: Config, com
     let draft = formatMessage(initial.type, initial.scope, initial.description, initial.body);
     let confidence: string | undefined = initial.confidence;
 
-    // Auto-commit mode: commit immediately without interactive prompt
     if (autoYes) {
         await git.commit(draft);
         console.log(`Committed: ${draft}`);
@@ -56,13 +55,13 @@ export async function runInteractiveGenerate(git: SimpleGit, config: Config, com
     }
 
     while (true) {
-        const action = await promptCommitAction(draft, confidence);
+        const currentLang = config.language || 'en';
+        const action = await promptCommitAction(draft, confidence, currentLang);
 
         if (action === 'accept') {
             if (commitMsgFile) {
                 writeFileSync(commitMsgFile, draft + '\n');
             } else {
-                // Interactive mode: commit with the generated message
                 await git.commit(draft);
                 console.log(`\nCommitted: ${draft}`);
                 console.log(`\nDon't forget to push your commits!`);
@@ -88,6 +87,17 @@ export async function runInteractiveGenerate(git: SimpleGit, config: Config, com
             continue;
         }
 
+        if (action === 'language') {
+            config.language = currentLang === 'en' ? 'id' : 'en';
+            await updateConfigFile(config);
+            const stopSpin = spin('Regenerating with new language...');
+            const result = await generateCommit(git, config, useAI, forceHeuristic, draft);
+            stopSpin();
+            draft = formatMessage(result.type, result.scope, result.description, result.body);
+            confidence = result.confidence;
+            continue;
+        }
+
         if (action === 'manual') {
             const manual = await manualEntry();
             if (manual !== null) {
@@ -101,5 +111,23 @@ export async function runInteractiveGenerate(git: SimpleGit, config: Config, com
             console.log('Cancelled, did not continue commit.');
             process.exit(1);
         }
+    }
+}
+
+async function updateConfigFile(config: Config): Promise<void> {
+    const { cosmiconfig } = await import('cosmiconfig');
+    const explorer = cosmiconfig('commitlintgen');
+    const searchResult = await explorer.search();
+    
+    if (searchResult && searchResult.filepath) {
+        const fs = await import('node:fs/promises');
+        const existingConfig = searchResult.config || {};
+        await fs.writeFile(
+            searchResult.filepath,
+            JSON.stringify({
+                ...existingConfig,
+                language: config.language
+            }, null, 2)
+        );
     }
 }
