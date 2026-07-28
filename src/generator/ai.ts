@@ -10,6 +10,11 @@ export interface AIResult {
     body?: string;
 }
 
+const ALLOWED_TYPES = [
+    "feat", "fix", "refactor", "perf", "docs",
+    "test", "chore", "build", "ci", "style", "revert"
+] as const;
+
 export async function generateAICommit(git: SimpleGit, config: Config, previousMessage?: string): Promise<AIResult> {
     const provider = createAIProvider(config);
 
@@ -26,101 +31,60 @@ export async function generateAICommit(git: SimpleGit, config: Config, previousM
 
     const processedDiff = processGitDiff(diff, config.diffProcessor);
 
-    const prompt = `Analyze this git diff and generate a conventional commit message following caveman-commit style.
+    // SYSTEM PROMPT: Menerjemahkan aturan caveman-commit secara terstruktur & ketat untuk model kecil
+    const systemPrompt = `You are a caveman-style commit message generator. Your output MUST be ultra-compressed, exact, and strictly valid JSON.
 
-Output format - MUST be valid JSON only:
+JSON OUTPUT STRUCTURE:
 {
-  "type": "feat",
-  "scope": "auth",
-  "description": "add user authentication",
-  "body": "Prevents unauthorized access to protected routes\\n- Adds JWT token validation\\n- Implements session expiry"
+  "type": "one of: ${ALLOWED_TYPES.join(', ')}",
+  "scope": "optional lower-case module name or empty string",
+  "description": "terse, exact summary in imperative mood, max 50 chars, no period",
+  "body": "reason 'why' change was made (wrap at 72 chars, use '-' for bullets), OR empty string if self-explanatory"
 }
 
-CRITICAL RULES:
-1. Subject line (type + scope + description):
-   - ≤50 chars total when possible, hard cap 72
-   - Imperative mood: "add", "fix", "remove" — NOT "added/adds/adding"
-   - Terse but clear: "add login" not "add user login functionality"
-   - No fluff: "now", "currently", "this commit", "functionality"
-   
-2. Type: [feat, fix, refactor, perf, docs, test, chore, build, ci, style, revert]
+CAVEMAN COMMIT RULES:
+1. FOCUS ON WHY OVER WHAT: The diff shows what changed; write WHY it changed.
+2. SUBJECT LINE: Imperative mood ("add", "fix", "remove" — NOT "added", "adds"). No trailing period. ≤50 chars.
+3. BODY RULE: Skip body ENTIRELY if subject is self-explanatory. ONLY add body for non-obvious "why", breaking changes, security fixes, or migrations.
+4. FORBIDDEN WORDS: NEVER use "This commit", "I", "we", "now", "currently", or AI attribution ("Generated with...").
+5. NO EMOJIS. No file names in description if scope covers it.
+${previousMessage ? `6. CRITICAL: Previous suggestion was "${previousMessage}". You MUST output a completely different type, scope, or description.` : ''}`;
 
-3. Scope: Optional, affected area (api, auth, ui, config, generator, etc)
+    // USER PROMPT: Menyajikan git diff dengan separator yang bersih
+    const userPrompt = `Analyze this git diff and produce a caveman-style commit JSON:
 
-4. Body (ONLY include if needed):
-   - Skip entirely when subject is self-explanatory
-   - Add ONLY for: non-obvious WHY, breaking changes, migration notes, complex multi-part changes
-   - Focus on WHY over WHAT (diff shows what)
-   - Use bullets with "-" for lists
-   - Wrap at 72 chars per line
-   - Use \\n for line breaks in JSON string
-   
-5. Body examples when needed:
-   - Large refactor: explain architectural reason
-   - Performance fix: explain bottleneck solved
-   - Breaking change: explain migration path
-   - Complex feature: explain key parts and rationale
-   
-6. Body examples to SKIP:
-   - Simple addition/deletion (subject says it all)
-   - Obvious bug fix (subject + diff clear)
-   - Single file change with clear purpose
-
-${previousMessage ? `7. MUST differ significantly from previous: "${previousMessage}"` : ''}
-
-Examples:
-
-Simple (no body needed):
-{
-  "type": "fix",
-  "scope": "auth",
-  "description": "resolve token expiry race"
-}
-
-Complex (body explains why):
-{
-  "type": "feat",
-  "scope": "generator",
-  "description": "add intelligent diff processor",
-  "body": "Reduces AI token usage by filtering noise from git diffs:\\n- Skips lockfiles and binary assets (png, pdf, zip)\\n- Strips verbose git metadata (index, ---, +++)\\n- Extracts function context from hunk headers\\n- Enforces 8k char budget per-file with omit counter\\n\\nReplaces naive truncateDiff with configurable processor."
-}
-
-Git diff:
+<git_diff>
 ${processedDiff}
-
-Output valid JSON only:`;
+</git_diff>`;
 
     const isGroq = config.aiProvider === 'groq';
 
     const response = await provider.chat.completions.create({
         model: config.model,
         messages: [
-            {
-                role: 'system',
-                content: `You are a JSON API. Respond ONLY with valid JSON. Do not include markdown, explanations, or thinking tags.${previousMessage ? ` IMPORTANT: The previous suggestion was "${previousMessage}". You MUST produce a different type, scope, or description — do not reuse or rephrase it.` : ''}`
-            },
-            { role: 'user', content: prompt }
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
         ],
-        temperature: 0.7,
+        // Temperature rendah (0.15) sangat krusial agar model kecil konsisten mengikuti gaya ultra-terse
+        temperature: 0.15,
         max_completion_tokens: 150,
         response_format: { type: 'json_object' },
         stream: false,
         ...(isGroq && { reasoning_effort: 'none', reasoning_format: 'hidden' }),
     });
 
-    // Type assertion since we explicitly set stream: false
     const chatCompletion = response as Awaited<ReturnType<typeof provider.chat.completions.create>> & { choices: Array<{ message: { content?: string | null } }> };
     const content = chatCompletion.choices[0]?.message?.content;
     if (!content) {
-        throw new Error('AI Provider returned empty response')
+        throw new Error('AI Provider returned empty response');
     }
 
     try {
         let cleaned = content.trim();
 
-        cleaned = cleaned.replace(/```json?\n?/g, '').replace(/```\n?/g, '');
-
-        cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/g, '');
+        // Pembersihan output untuk mengantisipasi kebiasaan model kecil yang kadang menyisipkan markdown/think tags
+        cleaned = cleaned.replace(/```json?\n?/gi, '').replace(/```\n?/g, '');
+        cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '');
 
         const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
@@ -129,12 +93,21 @@ Output valid JSON only:`;
 
         const result = JSON.parse(cleaned) as AIResult;
 
+        // Validasi field wajib
         if (!result.type || !result.description) {
-            throw new Error('Invalid AI response: missing required fields')
+            throw new Error('Invalid AI response: missing required fields');
         }
 
-        return result
+        // Hapus property opsional jika bernilai string kosong
+        if (result.scope === '' || result.scope === null) delete result.scope;
+        if (result.body === '' || result.body === null) delete result.body;
+
+        // Normalisasi dasar
+        result.type = result.type.toLowerCase().trim();
+        result.description = result.description.trim();
+
+        return result;
     } catch (error) {
-        throw new Error(`Failed to parse AI response: ${error instanceof Error ? error.message : String(error)}`)
+        throw new Error(`Failed to parse AI response: ${error instanceof Error ? error.message : String(error)}`);
     }
 }
