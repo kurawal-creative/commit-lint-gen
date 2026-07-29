@@ -1,4 +1,6 @@
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { SimpleGit } from 'simple-git';
 import { generateHeuristicCommit } from './heuristic.js';
 import { generateAICommit } from './ai.js';
@@ -117,17 +119,31 @@ export async function runInteractiveGenerate(git: SimpleGit, config: Config, com
 async function updateConfigFile(config: Config): Promise<void> {
     const { cosmiconfig } = await import('cosmiconfig');
     const explorer = cosmiconfig('commitlintgen');
+    const fs = await import('node:fs/promises');
+
+    const globalConfig = join(homedir(), '.commitlintgenrc.json');
     const searchResult = await explorer.search();
-    
+
+    let filepath: string;
+    let existingConfig: Record<string, unknown>;
+
     if (searchResult && searchResult.filepath) {
-        const fs = await import('node:fs/promises');
-        const existingConfig = searchResult.config || {};
-        await fs.writeFile(
-            searchResult.filepath,
-            JSON.stringify({
-                ...existingConfig,
-                language: config.language
-            }, null, 2)
-        );
+        filepath = searchResult.filepath;
+        existingConfig = searchResult.config || {};
+    } else if (existsSync(globalConfig)) {
+        const loaded = await explorer.load(globalConfig);
+        filepath = globalConfig;
+        existingConfig = loaded?.config || {};
+    } else {
+        // no config file found anywhere, nothing to update
+        return;
     }
+
+    await fs.writeFile(
+        filepath,
+        JSON.stringify({
+            ...existingConfig,
+            language: config.language
+        }, null, 2) + '\n'
+    );
 }
