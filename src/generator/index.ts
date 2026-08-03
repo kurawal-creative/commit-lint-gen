@@ -34,6 +34,19 @@ async function generateCommit(git: SimpleGit, config: Config, useAI: boolean, fo
  * only printed to stdout, not written to any file.
  */
 export async function runInteractiveGenerate(git: SimpleGit, config: Config, commitMsgFile?: string, autoYes?: boolean, forceHeuristic?: boolean): Promise<void> {
+    // Check if there are staged changes
+    const status = await git.status();
+    const hasStagedChanges = status.staged.length > 0;
+
+    if (!hasStagedChanges) {
+        console.error('\n✗ No staged changes found.');
+        console.error('\nPlease stage your changes first:');
+        console.error('  git add <file>       # Stage specific file');
+        console.error('  git add .            # Stage all changes');
+        console.error('\nThen run: clg generate');
+        process.exit(1);
+    }
+
     const useAI = !!config.apiKey;
     const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
     const spin = (msg: string) => {
