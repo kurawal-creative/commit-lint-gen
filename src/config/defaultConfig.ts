@@ -27,8 +27,8 @@ export const defaultConfig: Config = {
     language: 'en',
     rules: {
         maxLength: 100,
-        minLength: 10,
-        types: ['feat', 'fix', 'docs', 'style', 'refactor', 'test', 'chore', 'ci'],
+        minLength: 5,
+        types: ['feat', 'fix', 'docs', 'style', 'refactor', 'test', 'chore', 'ci', 'build', 'perf', 'revert'],
         requireScope: false
     },
     diffProcessor: {

@@ -43,7 +43,10 @@ export function processGitDiff(rawDiff: string, config: DiffProcessorConfig = {}
     }
 
     const cleanedLines: string[] = [];
-    cleanedLines.push(`diff --git ${headerLine}`);
+    cleanedLines.push(`FILE: ${filePath}`);
+    
+    let addedLines = 0;
+    let removedLines = 0;
 
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i]!;
@@ -63,7 +66,7 @@ export function processGitDiff(rawDiff: string, config: DiffProcessorConfig = {}
         if (match) {
           const funcContext = match[1]?.trim();
           if (funcContext) {
-            cleanedLines.push(`@@ context: ${funcContext} @@`);
+            cleanedLines.push(`@@ ${funcContext} @@`);
           } else {
             cleanedLines.push('@@');
           }
@@ -75,8 +78,16 @@ export function processGitDiff(rawDiff: string, config: DiffProcessorConfig = {}
         continue;
       }
 
+      // Count added/removed lines
+      if (trimmedLine.startsWith('+')) addedLines++;
+      if (trimmedLine.startsWith('-')) removedLines++;
+
       cleanedLines.push(trimmedLine);
     }
+
+    // Add stats summary for better context
+    const statsLine = `[+${addedLines} -${removedLines}]`;
+    cleanedLines.splice(1, 0, statsLine);
 
     const fileContent = cleanedLines.join('\n');
 

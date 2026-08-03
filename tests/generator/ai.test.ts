@@ -81,9 +81,12 @@ describe('generateAICommit', () => {
 });
 
 describe('processGitDiff', () => {
-  it('should return original diff if within budget', () => {
+  it('should return processed diff with file info and stats', () => {
     const diff = 'diff --git a/file1.ts b/file1.ts\n+added line';
-    expect(processGitDiff(diff, { maxTotalChars: 100 })).toContain('diff --git a/file1.ts b/file1.ts');
+    const result = processGitDiff(diff, { maxTotalChars: 100 });
+    expect(result).toContain('FILE: file1.ts');
+    expect(result).toContain('[+1 -0]');
+    expect(result).toContain('+added line');
   });
 
   it('should skip lockfiles when ignoreLocks is true', () => {

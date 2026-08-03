@@ -7,9 +7,8 @@ import { generateAICommit } from './ai.js';
 import { promptCommitAction, editDraft, manualEntry } from './interactive.js';
 import type { Config } from '../config/defaultConfig.js';
 
-function formatMessage(type: string, scope: string | undefined, description: string, body?: string): string {
-    const subject = scope ? `${type}(${scope}): ${description}` : `${type}: ${description}`;
-    return body ? `${subject}\n\n${body}` : subject;
+function formatMessage(type: string, scope: string | undefined, description: string): string {
+    return scope ? `${type}(${scope}): ${description}` : `${type}: ${description}`;
 }
 
 async function generateCommit(git: SimpleGit, config: Config, useAI: boolean, forceHeuristic?: boolean, previousMessage?: string) {
@@ -46,7 +45,7 @@ export async function runInteractiveGenerate(git: SimpleGit, config: Config, com
     const stopSpin = spin('Generating...');
     const initial = await generateCommit(git, config, useAI, forceHeuristic);
     stopSpin();
-    let draft = formatMessage(initial.type, initial.scope, initial.description, initial.body);
+    let draft = formatMessage(initial.type, initial.scope, initial.description);
     let confidence: string | undefined = initial.confidence;
 
     if (autoYes) {
@@ -84,7 +83,7 @@ export async function runInteractiveGenerate(git: SimpleGit, config: Config, com
             const stopSpin = spin('Regenerating...');
             const result = await generateCommit(git, config, useAI, forceHeuristic, draft);
             stopSpin();
-            draft = formatMessage(result.type, result.scope, result.description, result.body);
+            draft = formatMessage(result.type, result.scope, result.description);
             confidence = result.confidence;
             continue;
         }
@@ -95,7 +94,7 @@ export async function runInteractiveGenerate(git: SimpleGit, config: Config, com
             const stopSpin = spin('Regenerating with new language...');
             const result = await generateCommit(git, config, useAI, forceHeuristic, draft);
             stopSpin();
-            draft = formatMessage(result.type, result.scope, result.description, result.body);
+            draft = formatMessage(result.type, result.scope, result.description);
             confidence = result.confidence;
             continue;
         }

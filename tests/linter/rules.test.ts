@@ -14,7 +14,7 @@ const mockConfig: Config = {
   model: 'qwen/qwen3.6-27b',
   rules: {
     maxLength: 100,
-    minLength: 10,
+    minLength: 5,
     types: ['feat', 'fix', 'docs', 'style', 'refactor', 'test', 'chore', 'ci'],
     scopes: ['api', 'ui', 'cli'],
     requireScope: false,
@@ -49,22 +49,19 @@ describe('parseCommitMessage', () => {
 });
 
 describe('validateType', () => {
-  it('should accept valid types', () => {
+  it('should accept any type (lenient validation)', () => {
     const parsed = parseCommitMessage('feat: add feature')!;
     expect(validateType(parsed, mockConfig)).toBeNull();
   });
 
-  it('should reject invalid types', () => {
-    const parsed = parseCommitMessage('invalid: something')!;
-    const error = validateType(parsed, mockConfig);
-    expect(error).toBeTruthy();
-    expect(error?.rule).toBe('type');
+  it('should accept custom types even with types list', () => {
+    const parsed = parseCommitMessage('custom: something')!;
+    expect(validateType(parsed, mockConfig)).toBeNull();
   });
 
-  it('should allow any type when rules.types is empty', () => {
-    const config = { ...mockConfig, rules: { ...mockConfig.rules, types: [] } };
-    const parsed = parseCommitMessage('custom: something')!;
-    expect(validateType(parsed, config)).toBeNull();
+  it('should accept invalid types (lenient for AI tools)', () => {
+    const parsed = parseCommitMessage('Update: something')!;
+    expect(validateType(parsed, mockConfig)).toBeNull();
   });
 });
 
@@ -110,7 +107,7 @@ describe('validateLength', () => {
   });
 
   it('should reject too short message', () => {
-    const parsed = parseCommitMessage('feat: ab')!;
+    const parsed = parseCommitMessage('f: x')!;
     const error = validateLength(parsed, mockConfig);
     expect(error).toBeTruthy();
     expect(error?.rule).toBe('min-length');
@@ -123,18 +120,16 @@ describe('validateDescription', () => {
     expect(validateDescription(parsed)).toBeNull();
   });
 
-  it('should reject uppercase start', () => {
+  it('should accept uppercase start (relaxed rules)', () => {
     const parsed = parseCommitMessage('feat: Add feature')!;
     const error = validateDescription(parsed);
-    expect(error).toBeTruthy();
-    expect(error?.rule).toBe('description-case');
+    expect(error).toBeNull();
   });
 
-  it('should reject period at end', () => {
+  it('should accept period at end (relaxed rules)', () => {
     const parsed = parseCommitMessage('feat: add feature.')!;
     const error = validateDescription(parsed);
-    expect(error).toBeTruthy();
-    expect(error?.rule).toBe('description-period');
+    expect(error).toBeNull();
   });
 
   it('should reject empty description', () => {

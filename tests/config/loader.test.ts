@@ -29,7 +29,7 @@ describe('loadConfig', () => {
   it('should have default rules', () => {
     const config = loadConfig();
     expect(config.rules?.maxLength).toBe(100);
-    expect(config.rules?.minLength).toBe(10);
+    expect(config.rules?.minLength).toBe(5);
     expect(config.rules?.types).toContain('feat');
     expect(config.rules?.types).toContain('fix');
   });

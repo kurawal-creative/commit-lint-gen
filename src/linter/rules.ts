@@ -13,7 +13,7 @@ export interface ParsedCommit {
 }
 
 export function parseCommitMessage(message: string): ParsedCommit | null {
-  const trimmed = message.trim();
+  const trimmed = message.trim().split('\n')[0] || ''; // only first line
 
   // Match: type(scope): description or type: description
   const match = trimmed.match(/^(\w+)(\(([^)]+)\))?:\s*(.+)$/);
@@ -25,8 +25,8 @@ export function parseCommitMessage(message: string): ParsedCommit | null {
   const [, type, , scope, description] = match;
 
   const parsed: ParsedCommit = {
-    type: type!,
-    description: description!,
+    type: type || '',
+    description: description || '',
     raw: trimmed,
   };
 
@@ -40,17 +40,14 @@ export function parseCommitMessage(message: string): ParsedCommit | null {
 export function validateType(parsed: ParsedCommit, config: Config): ValidationError | null {
   const allowedTypes = config.rules?.types || [];
 
+  // If types array is empty or not defined, allow any type
   if (allowedTypes.length === 0) {
     return null;
   }
 
-  if (!allowedTypes.includes(parsed.type)) {
-    return {
-      rule: 'type',
-      message: `Type "${parsed.type}" is not allowed. Allowed types: ${allowedTypes.join(', ')}`,
-    };
-  }
-
+  // If types are defined but validation should be lenient, still allow any type
+  // This makes the tool accept commits from other AI tools (copilot, zed, etc)
+  // while still using the types list for generation
   return null;
 }
 
@@ -77,7 +74,7 @@ export function validateScope(parsed: ParsedCommit, config: Config): ValidationE
 
 export function validateLength(parsed: ParsedCommit, config: Config): ValidationError | null {
   const maxLength = config.rules?.maxLength || 100;
-  const minLength = config.rules?.minLength || 10;
+  const minLength = config.rules?.minLength || 5;
 
   if (parsed.raw.length > maxLength) {
     return {
@@ -104,21 +101,7 @@ export function validateDescription(parsed: ParsedCommit): ValidationError | nul
     };
   }
 
-  // Check if description starts with lowercase
-  if (parsed.description[0] !== parsed.description[0]?.toLowerCase()) {
-    return {
-      rule: 'description-case',
-      message: 'Description must start with lowercase',
-    };
-  }
-
-  // Check if description ends with period
-  if (parsed.description.endsWith('.')) {
-    return {
-      rule: 'description-period',
-      message: 'Description must not end with a period',
-    };
-  }
+  // Removed: lowercase check and period check for more flexibility
 
   return null;
 }

@@ -32,30 +32,55 @@ export async function generateAICommit(git: SimpleGit, config: Config, previousM
 
     const processedDiff = processGitDiff(diff, config.diffProcessor);
 
-    const systemPrompt = `You are a caveman-style commit message generator. Your output MUST be ultra-compressed, exact, and strictly valid JSON.${language === 'id' ? '\n\nIMPORTANT: Write "description" and "body" fields in Bahasa Indonesia.' : ''}
+    const systemPrompt = `You are an expert commit message generator that carefully analyzes git diffs. Your output MUST be ultra-precise, based on actual code changes, and strictly valid JSON.${language === 'id' ? '\n\nIMPORTANT: Write "description" and "body" fields in Bahasa Indonesia.' : ''}
 
 JSON OUTPUT STRUCTURE:
 {
   "type": "one of: ${ALLOWED_TYPES.join(', ')}",
   "scope": "optional lower-case module name or empty string",
-  "description": "terse, exact summary in imperative mood, max 50 chars, no period",
-  "body": "reason 'why' change was made (wrap at 72 chars, use '-' for bullets), OR empty string if self-explanatory"
+  "description": "exact summary of what changed in imperative mood, max 50 chars, no period",
+  "body": "detailed explanation of WHY and WHAT changed (wrap at 72 chars, use '-' for bullets), OR empty string if obvious"
 }
 
-CAVEMAN COMMIT RULES:
-1. FOCUS ON WHY OVER WHAT: The diff shows what changed; write WHY it changed.
-2. SUBJECT LINE: Imperative mood ("add", "fix", "remove" — NOT "added", "adds"). No trailing period. ≤50 chars.
-3. BODY RULE: Skip body ENTIRELY if subject is self-explanatory. ONLY add body for non-obvious "why", breaking changes, security fixes, or migrations.
-4. FORBIDDEN WORDS: NEVER use "This commit", "I", "we", "now", "currently", or AI attribution ("Generated with...").
-5. NO EMOJIS. No file names in description if scope covers it.
-${previousMessage ? `6. CRITICAL: Previous suggestion was "${previousMessage}". You MUST output a completely different type, scope, or description.` : ''}`;
+ANALYSIS RULES:
+1. READ EVERY LINE: Examine each +/- line in the diff carefully. Don't guess or assume.
+2. IDENTIFY SCOPE: Look at file paths to determine the affected module/component (e.g., api, ui, cli, auth, db).
+3. DETERMINE TYPE:
+   - feat: New feature/functionality added (+new functions, +new files, +new capabilities)
+   - fix: Bug fix (changes to fix errors, edge cases, validation)
+   - refactor: Code restructuring without changing behavior (rename, extract, reorganize)
+   - perf: Performance improvement (optimization, caching, algorithm change)
+   - docs: Documentation only (README, comments, JSDoc)
+   - test: Test changes (add/modify tests)
+   - chore: Maintenance (deps update, config, tooling)
+   - build: Build system (webpack, tsconfig, package.json scripts)
+   - ci: CI/CD changes (.github, .gitlab-ci)
+   - style: Code style (formatting, whitespace, no logic change)
+   - revert: Revert previous commit
+4. DESCRIPTION PRECISION: Be specific about WHAT changed. Use actual function/variable/file names if relevant.
+   - Good: "add user authentication middleware"
+   - Bad: "update code"
+   - Good: "fix null pointer in getUserById"
+   - Bad: "fix bug"
+5. BODY CONTENT: Include WHY if not obvious from description. Mention breaking changes, side effects, or important context.
+6. NO FLUFF: Skip phrases like "This commit", "I changed", "now we have". Get straight to the point.
+${previousMessage ? `7. CRITICAL: Previous suggestion was "${previousMessage}". You MUST analyze again and output a DIFFERENT and MORE ACCURATE message based on the actual diff.` : ''}`;
 
-    // USER PROMPT: Menyajikan git diff dengan separator yang bersih
-    const userPrompt = `Analyze this git diff and produce a caveman-style commit JSON:
+    // USER PROMPT: Instruksi eksplisit untuk analisis mendalam
+    const userPrompt = `Carefully analyze this git diff and produce an accurate commit message in JSON format.
+
+STEP-BY-STEP ANALYSIS:
+1. Read all changed files and identify which modules/components are affected
+2. For each file, note what lines were added (+) and removed (-)
+3. Determine the primary purpose: is it adding new functionality? fixing a bug? refactoring? updating docs?
+4. Choose the most appropriate type and scope based on the actual changes
+5. Write a precise description that summarizes the key change
 
 <git_diff>
 ${processedDiff}
-</git_diff>`;
+</git_diff>
+
+Based on the above diff, output ONLY valid JSON with type, scope (if applicable), description, and body (if needed).`;
 
     const isGroq = config.aiProvider === 'groq';
 
@@ -65,9 +90,9 @@ ${processedDiff}
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
         ],
-        // Temperature rendah (0.15) sangat krusial agar model kecil konsisten mengikuti gaya ultra-terse
-        temperature: 0.15,
-        max_completion_tokens: 150,
+        // Temperature sedikit lebih tinggi untuk analisis yang lebih baik
+        temperature: 0.3,
+        max_completion_tokens: 200,
         response_format: { type: 'json_object' },
         stream: false,
         ...(isGroq && { reasoning_effort: 'none', reasoning_format: 'hidden' }),
