@@ -27,17 +27,19 @@ export function loadConfig(): Config {
     const globalConfig = join(homedir(), '.commitlintgenrc.json');
     const wslWinHome = getWslWindowsHome();
     const wslWinConfig = wslWinHome ? join(wslWinHome, '.commitlintgenrc.json') : null;
-    const result =
-        explorer.search() ??
-        (existsSync(globalConfig) ? explorer.load(globalConfig) : null) ??
-        (wslWinConfig && existsSync(wslWinConfig) ? explorer.load(wslWinConfig) : null);
 
-    const fileConfig = result?.config ?? {};
+    const projectResult = explorer.search();
+    const globalResult = existsSync(globalConfig) ? explorer.load(globalConfig) : null;
+    const wslResult = wslWinConfig && existsSync(wslWinConfig) ? explorer.load(wslWinConfig) : null;
+
+    const globalCfg = globalResult?.config ?? wslResult?.config ?? {};
+    const projectCfg = projectResult?.config ?? {};
 
     const merged: Config = {
         ...defaultConfig,
-        ...fileConfig,
-        apiKey: process.env.GROQ_API_KEY ?? process.env.apiKey ?? fileConfig.apiKey ?? defaultConfig.apiKey,
+        ...globalCfg,
+        ...projectCfg,
+        apiKey: projectCfg.apiKey ?? globalCfg.apiKey ?? process.env.GROQ_API_KEY ?? process.env.apiKey ?? defaultConfig.apiKey,
     };
 
     return merged;
