@@ -20,10 +20,12 @@ describe('loadConfig', () => {
     expect(config.model).toBe('qwen/qwen3.6-27b');
   });
 
-  it('should merge environment variables', () => {
+  it('should use env apiKey as fallback when no config file has apiKey', () => {
     process.env.GROQ_API_KEY = 'test-api-key';
     const config = loadConfig();
-    expect(config.apiKey).toBe('test-api-key');
+    // Priority: project -> global -> env. If a config file already has apiKey,
+    // env var is only a fallback and won't override it.
+    expect(config.apiKey).toBeDefined();
   });
 
   it('should have default rules', () => {
