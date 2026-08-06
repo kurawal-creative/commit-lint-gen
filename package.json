@@ -1,6 +1,6 @@
 {
   "name": "commitlg",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "A simple git commit generator",
   "packageManager": "pnpm@11.15.0",
   "engines": {
