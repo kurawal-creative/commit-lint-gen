@@ -64,7 +64,11 @@ jobs:
           BRANCH="bump/v${{ steps.next.outputs.version }}"
           git checkout -b "$BRANCH"
           git add Cargo.toml Cargo.lock
-          git commit -m "chore(release): bump version to v${{ steps.next.outputs.version }}"
+          if git diff --cached --quiet; then
+            echo "Version unchanged (${C:-${{ steps.current.outputs.version }}}), skipping commit."
+          else
+            git commit -m "chore(release): bump version to v${{ steps.next.outputs.version }}"
+          fi
 
       - name: Push branch
         run: git push origin HEAD

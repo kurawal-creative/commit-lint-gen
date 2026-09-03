@@ -11,6 +11,30 @@ use crate::app::{App, AppState};
 
 use unicode_width::UnicodeWidthStr;
 
+// ticker: typing animation per 1.7 detik
+const NAMES: &[&str] = &["dhodo", "zan", "ian", "firman", "gilang", "kurawal", "reyner", "fakhri"];
+const CYCLE_MS: u128 = 1700;
+const CHARS_PER_MS: f64 = 3.0; // 3 frame per char @ 50ms/frame
+
+/// Returns (display_text, show_cursor)
+fn ticker_typing(ticker: std::time::Instant) -> (String, bool) {
+    let ms = ticker.elapsed().as_millis();
+    let idx = (ms / CYCLE_MS) as usize % NAMES.len();
+    let name = NAMES[idx];
+    let phase = ms % CYCLE_MS;
+    let typing_ms = (name.len() as f64 / CHARS_PER_MS * 50.0) as u128;
+    if phase < typing_ms {
+        // typing in progress
+        let chars = (phase as f64 / 50.0 * CHARS_PER_MS).ceil() as usize;
+        let visible = chars.min(name.len());
+        (name[..visible].to_string(), true)
+    } else {
+        // pause: show full name + blinking cursor
+        let blink = ((phase - typing_ms) / 300).is_multiple_of(2);
+        (name.to_string(), blink)
+    }
+}
+
 pub const MENU_OPTIONS: [&str; 6] = [
     " Commit ",
     " Edit  ",
@@ -119,16 +143,25 @@ pub fn render<B: io::Write>(
 }
 
 fn render_header(f: &mut ratatui::Frame, area: Rect, app: &App) {
-    let lang = if app.is_indo { "ID " } else { "EN " };
+    use ratatui::text::{Line, Span};
+    let lang = if app.is_indo { "ID" } else { "EN" };
     let short = app.model.rsplit('/').next().unwrap_or(&app.model);
-    let left = format!(" 🐰 COMMIT LINT GEN BY KURAWAL  ·  {}", short.to_uppercase());
-    // rumus: kiri + ganjal blank + lang pojok kanan, pas selebar box
+    let (display, _show_cursor) = ticker_typing(app.ticker);
+    let name_text = display.to_uppercase();
+    let prefix = " 🐰 COMMIT LINT GEN BY ";
+    let model_text = format!(" ·  {}", short.to_uppercase());
     let w = area.width as usize;
-    let gap = w.saturating_sub(left.width() + lang.width());
-    let title = format!("{}{}{}", left, " ".repeat(gap), lang);
-    let widget = Paragraph::new(title)
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
-    f.render_widget(widget, area);
+    let max_name = NAMES.iter().map(|n| n.len()).max().unwrap_or(0);
+    let model_end = prefix.width() + max_name + model_text.width();
+    let gap_to_lang = w.saturating_sub(model_end + lang.width());
+    let spans = vec![
+        Span::styled(prefix, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(name_text.clone(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("{}{}", " ".repeat(max_name - name_text.len()), model_text), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(" ".repeat(gap_to_lang), Style::default()),
+        Span::styled(lang, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+    ];
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn render_message(f: &mut ratatui::Frame, area: Rect, msg: &str) {

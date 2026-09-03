@@ -19,4 +19,5 @@ pub struct App {
     pub diff: String,
     pub pending: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     pub rt: tokio::runtime::Runtime,
+    pub ticker: std::time::Instant,
 }

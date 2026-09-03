@@ -54,6 +54,7 @@ fn main() -> io::Result<()> {
         diff,
         pending: None,
         rt,
+        ticker: std::time::Instant::now(),
     };
 
     spawn_generate(&mut app);
@@ -279,6 +280,19 @@ fn handle_input(key: &KeyCode, app: &mut App) -> io::Result<()> {
         }
         KeyCode::Left => app.edit_cursor = app.edit_cursor.saturating_sub(1),
         KeyCode::Right => app.edit_cursor = (app.edit_cursor + 1).min(len),
+        KeyCode::Up => {
+            let (line, col) = pos_to_line_col(&app.edit_input, app.edit_cursor);
+            if line > 0 {
+                app.edit_cursor = line_col_to_pos(&app.edit_input, line - 1, col);
+            }
+        }
+        KeyCode::Down => {
+            let (line, col) = pos_to_line_col(&app.edit_input, app.edit_cursor);
+            let total_lines = app.edit_input.lines().count();
+            if line + 1 < total_lines {
+                app.edit_cursor = line_col_to_pos(&app.edit_input, line + 1, col);
+            }
+        },
         KeyCode::Home => app.edit_cursor = 0,
         KeyCode::End => app.edit_cursor = len,
         KeyCode::Esc => {
@@ -300,9 +314,43 @@ fn print_leftover(msg: &str) {
         .unwrap_or(56);
     println!("{}", "─".repeat(w));
     for line in msg.lines() {
-        println!("    {}", line);
+        println!("  {}", line);
     }
     println!("{}", "─".repeat(w));
+}
+
+fn pos_to_line_col(s: &str, pos: usize) -> (usize, usize) {
+    let mut line = 0;
+    let mut col = 0;
+    for (i, c) in s.chars().enumerate() {
+        if i >= pos {
+            break;
+        }
+        if c == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+fn line_col_to_pos(s: &str, target_line: usize, target_col: usize) -> usize {
+    let mut line = 0;
+    let mut col = 0;
+    for (i, c) in s.chars().enumerate() {
+        if c == '\n' {
+            line += 1;
+            col = 0;
+            continue;
+        }
+        if line == target_line && col >= target_col {
+            return i;
+        }
+        col += 1;
+    }
+    s.len()
 }
 
 fn cleanup(terminal: &mut Terminal<CrosstermBackend<&mut io::Stdout>>) -> io::Result<()> {
