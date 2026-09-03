@@ -1,6 +1,6 @@
 {
   "name": "commitlg",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "A simple git commit generator",
   "license": "MIT",
   "bin": {

@@ -1,55 +1,66 @@
 #!/usr/bin/env node
+// Bootstrap launcher: Rename launcher JS ini ke .bak, lalu mv biner native OS menggantikan launcher ini
 const { execFileSync, execSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
 const isWin = process.platform === "win32";
+const isLinux = process.platform === "linux";
 
-if (!isWin) {
-  // Jika di Linux, jalankan logika standard/execve
-  const realScriptPath = fs.realpathSync(__filename);
-  const realDir = path.dirname(realScriptPath);
-  const linuxBin = path.join(realDir, "commitlg-cli-linux-x64");
-
-  if (fs.existsSync(linuxBin)) {
-    fs.renameSync(realScriptPath, realScriptPath + ".bak");
-    fs.renameSync(linuxBin, realScriptPath);
-    fs.chmodSync(realScriptPath, 0o755);
-    execFileSync(realScriptPath, process.argv.slice(2), { stdio: "inherit" });
-    process.exit(0);
-  }
-}
-
-// --- LOGIKA KHUSUS WINDOWS ---
-const realScriptPath = fs.realpathSync(__filename);
-const binDir = path.dirname(realScriptPath);
-const winNativeBin = path.join(binDir, "commitlg-cli-win-x64.exe");
-
-if (!fs.existsSync(winNativeBin)) {
-  console.error(`clg: Biner native Windows tidak ditemukan di ${binDir}`);
+if (!isWin && !isLinux) {
+  console.error(`clg: OS ${process.platform} belum didukung.`);
   process.exit(1);
 }
 
-try {
-  // 1. Ambil PATH User saat ini dari Registry
-  const currentPath = execSync('reg query "HKCU\\Environment" /v Path', { encoding: "utf8" });
+// 1. Tentukan biner native berdasarkan OS
+const nativeBinaryName = isWin ? "commitlg-cli-win-x64.exe" : "commitlg-cli-linux-x64";
 
-  if (!currentPath.includes(binDir)) {
-    // 2. Tambahkan folder bin ke PATH User jika belum ada
-    console.log(`[clg] Menambahkan ${binDir} ke User PATH...`);
-    execSync(`setx PATH "%PATH%;${binDir}"`);
-    console.log("[clg] PATH berhasil ditambahkan. Buka terminal baru agar perubahan aktif sepenuhnya.");
-  }
-} catch (e) {
-  // Jika variabel PATH belum ada sama sekali di HKCU
+// 2. Resolve Symlink agar aman saat diinstal via npm link / mise / pnpm
+const realScriptPath = fs.realpathSync(__filename);
+const realDir = path.dirname(realScriptPath);
+const srcNativeBinary = path.join(realDir, nativeBinaryName);
+
+if (!fs.existsSync(srcNativeBinary)) {
+  console.error(`clg: Biner native ${nativeBinaryName} tidak ditemukan di paket.`);
+  process.exit(1);
+}
+
+// --- KHUSUS WINDOWS: Auto PowerShell PATH Setup ---
+if (isWin) {
   try {
-    execSync(`setx PATH "${binDir}"`);
+    const getPathCmd = `powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path', 'User')"`;
+    const currentUserPath = execSync(getPathCmd, { encoding: "utf8" }).trim();
+
+    const pathEntries = currentUserPath.split(";").map((p) => p.trim().toLowerCase());
+    const normalizedBinDir = realDir.trim().toLowerCase();
+
+    if (!pathEntries.includes(normalizedBinDir)) {
+      const newPath = currentUserPath ? `${currentUserPath};${realDir}` : realDir;
+      const setPathCmd = `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', '${newPath.replace(/'/g, "''")}', 'User')"`;
+      execSync(setPathCmd);
+    }
   } catch (_) {}
 }
 
-// 3. Eksekusi biner Rust native secara langsung
 try {
-  execFileSync(winNativeBin, process.argv.slice(2), { stdio: "inherit" });
+  const backupPath = realScriptPath + ".bak";
+
+  // 3. Lakukan Swap (mv):
+  // Rename launcher JS ke clg.exe.bak -> Rename biner native ke clg.exe
+  fs.renameSync(realScriptPath, backupPath);
+  fs.renameSync(srcNativeBinary, realScriptPath);
+
+  if (isLinux) {
+    try {
+      fs.chmodSync(realScriptPath, 0o755);
+    } catch (_) {
+      execFileSync("chmod", ["+x", realScriptPath]);
+    }
+  }
+
+  // 4. Eksekusi file realScriptPath yang sekarang sudah menjadi biner Rust murni
+  execFileSync(realScriptPath, process.argv.slice(2), { stdio: "inherit" });
 } catch (e) {
+  console.error(`clg swap error: ${e.message}`);
   process.exit(e.status ?? 1);
 }
