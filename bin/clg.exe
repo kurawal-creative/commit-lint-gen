@@ -1,27 +1,42 @@
 #!/usr/bin/env node
-// ponytail: rename diri sendiri ke .bak, mv binary asli OS jadi clg.exe, lalu exec
-// Linux tetap bernama "clg.exe" tapi isinya ELF (dieksekusi via execve, bukan Node loader)
+// ponytail: rename launcher JS ke .bak, mv binary native OS menjadi clg.exe, lalu panggil via exec
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const name = process.platform === "win32" ? "clg-win32-x64" : process.platform === "linux" ? "clg-linux-x64" : null;
-if (!name) {
+const isWin = process.platform === "win32";
+const isLinux = process.platform === "linux";
+
+if (!isWin && !isLinux) {
   console.error(`clg: OS ${process.platform} belum didukung (baru win/linux x64).`);
   process.exit(1);
 }
 
+// Nama file biner fisik yang berada di direktori bin/
+const nativeBinaryName = isWin ? "commitlg-cli-win-x64.exe" : "commitlg-cli-linux-x64";
+
 const me = __filename;
-const src = path.join(__dirname, name);
+const src = path.join(__dirname, nativeBinaryName);
+
 if (!fs.existsSync(src)) {
-  console.error(`clg: ${name} tidak ditemukan di paket, install ulang.`);
+  console.error(`clg: ${nativeBinaryName} tidak ditemukan di paket, install ulang.`);
   process.exit(1);
 }
 
 try {
+  // Swap/rename file: launcher JS -> clg.exe.bak, biner native -> clg.exe
   fs.renameSync(me, me + ".bak");
   fs.renameSync(src, me);
-  if (process.platform !== "win32") execFileSync("chmod", ["+x", me]);
+
+  if (isLinux) {
+    try {
+      fs.chmodSync(me, 0o755);
+    } catch (_) {
+      execFileSync("chmod", ["+x", me]);
+    }
+  }
+
+  // Jalankan clg.exe (yang sekarang sudah berupa biner native murni)
   execFileSync(me, process.argv.slice(2), { stdio: "inherit" });
 } catch (e) {
   console.error(`clg: ${e.message}`);
