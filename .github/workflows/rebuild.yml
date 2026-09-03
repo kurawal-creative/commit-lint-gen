@@ -1,0 +1,100 @@
+name: Rebuild Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Why rebuild? (for changelog)'
+        required: false
+        default: 'manual rebuild'
+      npm_tag:
+        description: 'npm dist-tag (latest, beta, next, etc.)'
+        required: false
+        default: 'latest'
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    name: Rebuild binaries + republish at current version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read current version
+        id: version
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "version=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Current version: $VERSION"
+
+      - name: Sanity check
+        env:
+          TAG_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          VERSION="${TAG_VERSION#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "0.0.0" ]; then
+            echo "Refusing to rebuild a 0.0.0 release. Bump version first via Version-bump workflow."
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --locked
+
+      - name: Build all platforms
+        run: make cross
+
+      - name: Collect binaries
+        id: collect
+        run: |
+          mkdir -p artifacts
+          for t in x86_64-unknown-linux-gnu \
+                   x86_64-unknown-linux-musl \
+                   aarch64-unknown-linux-musl \
+                   x86_64-pc-windows-gnu; do
+            if [[ "$t" == *windows* ]]; then
+              cp "target/$t/release/clg.exe" "artifacts/clg-$t.exe"
+            else
+              cp "target/$t/release/clg" "artifacts/clg-$t"
+            fi
+          done
+          ls -la artifacts/
+
+      - name: Find or create release for current version
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          files: artifacts/*
+          generate_release_notes: false
+          draft: false
+          prerelease: false
+          overwrite_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to npm (force same version)
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "NPM_TOKEN not set — skipping npm republish."
+            echo "Binaries updated in GitHub Release ${{ steps.version.outputs.version }}."
+            exit 0
+          fi
+          # npm reads from ~/.npmrc, not NODE_AUTH_TOKEN env var.
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          NPM_TAG="${{ github.event.inputs.npm_tag || 'latest' }}"
+          VERSION=${{ steps.version.outputs.version }}
+          VERSION=${VERSION#v}
+          VERSION=$VERSION NPM_TAG=$NPM_TAG PUBLISH=1 make publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

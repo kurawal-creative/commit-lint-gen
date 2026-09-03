@@ -1,0 +1,29 @@
+#!/usr/bin/env node
+// ponytail: rename diri sendiri ke .bak, mv binary asli OS jadi clg.exe, lalu exec
+// Linux tetap bernama "clg.exe" tapi isinya ELF (dieksekusi via execve, bukan Node loader)
+const { execFileSync } = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const name = process.platform === "win32" ? "clg-win32-x64" : process.platform === "linux" ? "clg-linux-x64" : null;
+if (!name) {
+  console.error(`clg: OS ${process.platform} belum didukung (baru win/linux x64).`);
+  process.exit(1);
+}
+
+const me = __filename;
+const src = path.join(__dirname, name);
+if (!fs.existsSync(src)) {
+  console.error(`clg: ${name} tidak ditemukan di paket, install ulang.`);
+  process.exit(1);
+}
+
+try {
+  fs.renameSync(me, me + ".bak");
+  fs.renameSync(src, me);
+  if (process.platform !== "win32") execFileSync("chmod", ["+x", me]);
+  execFileSync(me, process.argv.slice(2), { stdio: "inherit" });
+} catch (e) {
+  console.error(`clg: ${e.message}`);
+  process.exit(e.status ?? 1);
+}
