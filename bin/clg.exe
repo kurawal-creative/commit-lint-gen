@@ -1,63 +1,71 @@
 #!/usr/bin/env node
-const { execFileSync, execSync } = require("node:child_process");
+const { execFileSync, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
 const isWin = process.platform === "win32";
 const isLinux = process.platform === "linux";
 
-const nativeBinaryName = isWin ? "commitlg-cli-win-x64.exe" : "commitlg-cli-linux-x64";
-const realScriptPath = fs.realpathSync(__filename);
-const realDir = path.dirname(realScriptPath);
-const srcNativeBinary = path.join(realDir, nativeBinaryName);
-
-if (!fs.existsSync(srcNativeBinary)) {
-  console.error(`clg: Biner native ${nativeBinaryName} tidak ditemukan di paket.`);
+if (!isWin && !isLinux) {
+  console.error(`clg: OS ${process.platform} belum didukung.`);
   process.exit(1);
 }
 
-// --- KHUSUS WINDOWS: Tambahkan PATH & Hapus Shim npm (.cmd / .ps1) ---
-if (isWin) {
+// Resolve Symlink agar aman saat diinstal via npm link / mise / pnpm
+const realScriptPath = fs.realpathSync(__filename);
+const realDir = path.dirname(realScriptPath);
+
+// ==========================================
+// 🐧 STRATEGI LINUX: SWAP / MOVE (MV)
+// ==========================================
+if (isLinux) {
+  const linuxBinName = "commitlg-cli-linux-x64";
+  const srcLinuxBinary = path.join(realDir, linuxBinName);
+
+  if (!fs.existsSync(srcLinuxBinary)) {
+    console.error(`clg: Biner native ${linuxBinName} tidak ditemukan.`);
+    process.exit(1);
+  }
+
   try {
-    // 1. Tambah PATH via PowerShell
-    const getPathCmd = `powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path', 'User')"`;
-    const currentUserPath = execSync(getPathCmd, { encoding: "utf8" }).trim();
-    const pathEntries = currentUserPath.split(";").map((p) => p.trim().toLowerCase());
+    const backupPath = realScriptPath + ".bak";
 
-    if (!pathEntries.includes(realDir.trim().toLowerCase())) {
-      const newPath = currentUserPath ? `${currentUserPath};${realDir}` : realDir;
-      const setPathCmd = `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', '${newPath.replace(/'/g, "''")}', 'User')"`;
-      execSync(setPathCmd);
-    }
+    // Rename JS launcher ke .bak -> Rename biner ELF Rust menggantikan JS launcher
+    fs.renameSync(realScriptPath, backupPath);
+    fs.renameSync(srcLinuxBinary, realScriptPath);
 
-    // 2. Hapus shim npm (.cmd / .ps1) yang memaksa panggilan via 'node'
-    const globalNpmBinDir = path.dirname(realDir); // Folder bin global npm
-    const cmdShim = path.join(globalNpmBinDir, "clg.cmd");
-    const ps1Shim = path.join(globalNpmBinDir, "clg.ps1");
-
-    if (fs.existsSync(cmdShim)) fs.unlinkSync(cmdShim);
-    if (fs.existsSync(ps1Shim)) fs.unlinkSync(ps1Shim);
-  } catch (_) {}
-}
-
-try {
-  const backupPath = realScriptPath + ".bak";
-
-  // Swap/Move
-  fs.renameSync(realScriptPath, backupPath);
-  fs.renameSync(srcNativeBinary, realScriptPath);
-
-  if (isLinux) {
     try {
       fs.chmodSync(realScriptPath, 0o755);
     } catch (_) {
       execFileSync("chmod", ["+x", realScriptPath]);
     }
+
+    // Eksekusi biner ELF Rust murni
+    execFileSync(realScriptPath, process.argv.slice(2), { stdio: "inherit" });
+    process.exit(0);
+  } catch (e) {
+    console.error(`clg Linux swap error: ${e.message}`);
+    process.exit(e.status ?? 1);
+  }
+}
+
+// ==========================================
+// 🪟 STRATEGI WINDOWS: NO MV, NO POWERSHELL (SPAWNSYNC PROXY)
+// ==========================================
+if (isWin) {
+  const winBinName = "commitlg-cli-win-x64.exe";
+  const winNativeBinary = path.join(realDir, winBinName);
+
+  if (!fs.existsSync(winNativeBinary)) {
+    console.error(`clg: Biner native ${winBinName} tidak ditemukan.`);
+    process.exit(1);
   }
 
-  // Eksekusi biner Rust murni
-  execFileSync(realScriptPath, process.argv.slice(2), { stdio: "inherit" });
-} catch (e) {
-  console.error(`clg swap error: ${e.message}`);
-  process.exit(e.status ?? 1);
+  // Panggil biner Rust secara langsung menggunakan spawnSync
+  const result = spawnSync(winNativeBinary, process.argv.slice(2), {
+    stdio: "inherit",
+    shell: false,
+  });
+
+  process.exit(result.status ?? 0);
 }
