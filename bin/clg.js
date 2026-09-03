@@ -1,71 +1,43 @@
 #!/usr/bin/env node
-const { execFileSync, spawnSync } = require("node:child_process");
-const fs = require("node:fs");
-const path = require("node:path");
 
-const isWin = process.platform === "win32";
-const isLinux = process.platform === "linux";
+const fs = require('fs');
+const path = require('path');
+const { execSync, spawn } = require('child_process');
 
-if (!isWin && !isLinux) {
-  console.error(`clg: OS ${process.platform} belum didukung.`);
-  process.exit(1);
-}
+const isWindows = process.platform === 'win32';
+const globalBinPath = execSync('npm config get prefix').toString().trim();
 
-// Resolve Symlink agar aman saat diinstal via npm link / mise / pnpm
-const realScriptPath = fs.realpathSync(__filename);
-const realDir = path.dirname(realScriptPath);
+const binName = 'clg';
+const binaryName = isWindows ? 'commitlg-cli-win-x64.exe' : 'commitlg-cli-linux-x64';
+const binaryPath = path.join(__dirname, binaryName);
 
-// ==========================================
-// 🐧 STRATEGI LINUX: SWAP / MOVE (MV)
-// ==========================================
-if (isLinux) {
-  const linuxBinName = "commitlg-cli-linux-x64";
-  const srcLinuxBinary = path.join(realDir, linuxBinName);
+if (isWindows) {
+  // --- WINDOWS: OVERRIDE 3 FILE WRAPPER ---
+  const posixPath = binaryPath
+    .replace(/^([a-zA-Z]):/, (_, drive) => `/${drive.toLowerCase()}`)
+    .replace(/\\/g, '/');
 
-  if (!fs.existsSync(srcLinuxBinary)) {
-    console.error(`clg: Biner native ${linuxBinName} tidak ditemukan.`);
-    process.exit(1);
-  }
+  // 1. Override Bash wrapper (Git Bash)
+  fs.writeFileSync(path.join(globalBinPath, binName), `#!/bin/sh\nexec "${posixPath}" "$@"`, { mode: 0o755 });
 
-  try {
-    const backupPath = realScriptPath + ".bak";
+  // 2. Override CMD & BAT wrapper
+  const cmdContent = `@echo off\r\n"${binaryPath}" %*`;
+  fs.writeFileSync(path.join(globalBinPath, `${binName}.cmd`), cmdContent);
 
-    // Rename clg.js ke clg.js.bak -> Rename biner ELF Rust menggantikan clg.js
-    fs.renameSync(realScriptPath, backupPath);
-    fs.renameSync(srcLinuxBinary, realScriptPath);
+  // 3. Override PowerShell wrapper
+  fs.writeFileSync(path.join(globalBinPath, `${binName}.ps1`), `& "${binaryPath}" $args`);
 
-    try {
-      fs.chmodSync(realScriptPath, 0o755);
-    } catch (_) {
-      execFileSync("chmod", ["+x", realScriptPath]);
-    }
+  spawn(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
+} else {
+  // --- LINUX & MAC: SYMLINK NATIVE ---
+  const targetSymlink = path.join(globalBinPath, 'bin', binName);
 
-    // Eksekusi biner ELF Rust murni
-    execFileSync(realScriptPath, process.argv.slice(2), { stdio: "inherit" });
-    process.exit(0);
-  } catch (e) {
-    console.error(`clg Linux swap error: ${e.message}`);
-    process.exit(e.status ?? 1);
-  }
-}
+  // Pastikan binary asli punya akses eksekusi (+x)
+  fs.chmodSync(binaryPath, '755');
 
-// ==========================================
-// 🪟 STRATEGI WINDOWS: SPAWNSYNC (NO MV)
-// ==========================================
-if (isWin) {
-  const winBinName = "commitlg-cli-win-x64.exe";
-  const winNativeBinary = path.join(realDir, winBinName);
+  // Buat symlink langsung ke binary native
+  if (fs.existsSync(targetSymlink)) fs.unlinkSync(targetSymlink);
+  fs.symlinkSync(binaryPath, targetSymlink);
 
-  if (!fs.existsSync(winNativeBinary)) {
-    console.error(`clg: Biner native ${winBinName} tidak ditemukan.`);
-    process.exit(1);
-  }
-
-  // Panggil biner Rust Windows secara langsung menggunakan spawnSync
-  const result = spawnSync(winNativeBinary, process.argv.slice(2), {
-    stdio: "inherit",
-    shell: false,
-  });
-
-  process.exit(result.status ?? 0);
+  spawn(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
 }
