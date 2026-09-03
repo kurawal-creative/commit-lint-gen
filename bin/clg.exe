@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// Bootstrap launcher: Rename launcher JS ini ke .bak, lalu mv biner native OS menggantikan launcher ini
 const { execFileSync, execSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -7,15 +6,7 @@ const path = require("node:path");
 const isWin = process.platform === "win32";
 const isLinux = process.platform === "linux";
 
-if (!isWin && !isLinux) {
-  console.error(`clg: OS ${process.platform} belum didukung.`);
-  process.exit(1);
-}
-
-// 1. Tentukan biner native berdasarkan OS
 const nativeBinaryName = isWin ? "commitlg-cli-win-x64.exe" : "commitlg-cli-linux-x64";
-
-// 2. Resolve Symlink agar aman saat diinstal via npm link / mise / pnpm
 const realScriptPath = fs.realpathSync(__filename);
 const realDir = path.dirname(realScriptPath);
 const srcNativeBinary = path.join(realDir, nativeBinaryName);
@@ -25,28 +16,34 @@ if (!fs.existsSync(srcNativeBinary)) {
   process.exit(1);
 }
 
-// --- KHUSUS WINDOWS: Auto PowerShell PATH Setup ---
+// --- KHUSUS WINDOWS: Tambahkan PATH & Hapus Shim npm (.cmd / .ps1) ---
 if (isWin) {
   try {
+    // 1. Tambah PATH via PowerShell
     const getPathCmd = `powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path', 'User')"`;
     const currentUserPath = execSync(getPathCmd, { encoding: "utf8" }).trim();
-
     const pathEntries = currentUserPath.split(";").map((p) => p.trim().toLowerCase());
-    const normalizedBinDir = realDir.trim().toLowerCase();
 
-    if (!pathEntries.includes(normalizedBinDir)) {
+    if (!pathEntries.includes(realDir.trim().toLowerCase())) {
       const newPath = currentUserPath ? `${currentUserPath};${realDir}` : realDir;
       const setPathCmd = `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', '${newPath.replace(/'/g, "''")}', 'User')"`;
       execSync(setPathCmd);
     }
+
+    // 2. Hapus shim npm (.cmd / .ps1) yang memaksa panggilan via 'node'
+    const globalNpmBinDir = path.dirname(realDir); // Folder bin global npm
+    const cmdShim = path.join(globalNpmBinDir, "clg.cmd");
+    const ps1Shim = path.join(globalNpmBinDir, "clg.ps1");
+
+    if (fs.existsSync(cmdShim)) fs.unlinkSync(cmdShim);
+    if (fs.existsSync(ps1Shim)) fs.unlinkSync(ps1Shim);
   } catch (_) {}
 }
 
 try {
   const backupPath = realScriptPath + ".bak";
 
-  // 3. Lakukan Swap (mv):
-  // Rename launcher JS ke clg.exe.bak -> Rename biner native ke clg.exe
+  // Swap/Move
   fs.renameSync(realScriptPath, backupPath);
   fs.renameSync(srcNativeBinary, realScriptPath);
 
@@ -58,7 +55,7 @@ try {
     }
   }
 
-  // 4. Eksekusi file realScriptPath yang sekarang sudah menjadi biner Rust murni
+  // Eksekusi biner Rust murni
   execFileSync(realScriptPath, process.argv.slice(2), { stdio: "inherit" });
 } catch (e) {
   console.error(`clg swap error: ${e.message}`);
