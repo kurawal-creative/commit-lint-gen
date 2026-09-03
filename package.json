@@ -1,31 +1,19 @@
 {
   "name": "commitlg",
-  "version": "1.4.2",
+  "version": "2.0.0",
   "description": "A simple git commit generator",
-  "packageManager": "pnpm@11.15.0",
-  "engines": {
-    "node": ">=22"
-  },
+  "license": "MIT",
   "bin": {
-    "clg": "./dist/cli.js"
+    "clg": "./bin/clg.js"
   },
   "files": [
-    "dist"
+    "bin",
+    "README.md",
+    "LICENSE"
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/dhodo999/commit-lint-gen.git"
-  },
-  "bugs": {
-    "url": "https://github.com/dhodo999/commit-lint-gen/issues"
-  },
-  "homepage": "https://github.com/dhodo999/commit-lint-gen#readme",
-  "scripts": {
-    "dev": "tsx src/cli.ts",
-    "build": "rslib build",
-    "test": "vitest",
-    "lint": "eslint src",
-    "uninstall": "pnpm unlink --global commitlg"
+    "url": "https://github.com/kurawal-creative/commit-lint-gen.git"
   },
   "keywords": [
     "git",
@@ -39,28 +27,5 @@
     "cli",
     "commit-generator"
   ],
-  "author": "Dhodo",
-  "license": "MIT",
-  "type": "module",
-  "dependencies": {
-    "chalk": "^5.6.2",
-    "commander": "^15.0.0",
-    "cosmiconfig": "^9.0.2",
-    "dotenv": "^17.4.2",
-    "openai": "^6.46.0",
-    "prompts": "^2.4.2",
-    "simple-git": "^3.36.0"
-  },
-  "devDependencies": {
-    "@rslib/core": "^0.23.2",
-    "@types/node": "^26.1.1",
-    "@types/prompts": "^2.4.9",
-    "eslint": "^10.7.0",
-    "globals": "^17.7.0",
-    "prettier": "^3.9.5",
-    "tsx": "^4.23.0",
-    "typescript": "^6.0.3",
-    "typescript-eslint": "^8.63.0",
-    "vitest": "^4.1.10"
-  }
+  "author": "Dhodo"
 }

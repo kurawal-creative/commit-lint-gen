@@ -1,5 +1,0 @@
-{
-  "aiProvider": "groq",
-  "baseURL": "https://api.groq.com/openai/v1",
-  "model": "qwen/qwen3.6-27b"
-}

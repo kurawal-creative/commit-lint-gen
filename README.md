@@ -1,302 +1,131 @@
-# commitlg
+# clg
 
-A CLI tool that lints and generates commit messages following the [Conventional Commits](https://www.conventionalcommits.org/) standard — straight from your staged `git diff`, so you don't have to think about the format every time you commit.
+![clg screenshot](https://raw.githubusercontent.com/kurawal-creative/commit-lint-gen/refs/heads/beta/ss.png)
 
-Developers often write lazy commit messages ("fix bug", "update", "wip") because getting the format right takes time and effort. `commitlg` reads your staged changes and:
+A terminal UI tool that generates commit messages following the [Conventional Commits](https://www.conventionalcommits.org/) standard — straight from your staged `git diff`, so you don't have to think about the format every time you commit.
 
-- **Validates** commit message format before the commit is accepted (linter)
-- **Generates** a draft commit message based on diff analysis (generator), either through simple heuristics or AI
-
-The result: a consistent, readable commit history that's ready to power automatic changelogs or semantic versioning.
+Developers often write lazy commit messages ("fix bug", "update", "wip") because getting the format right takes time and effort. `clg` reads your staged changes and generates a draft commit message powered by AI (Groq + Qwen3.8-27B by default).
 
 ## Key Features
 
-- **Automatic linting** — validates commit messages against Conventional Commits via a git hook, rejecting the commit if the format is wrong
-- **AI-assisted generation** — reads `git diff --staged` and produces a `type(scope): description` draft automatically
-- **Heuristic fallback** — still generates a draft without an API key, based on changed file patterns
-- **Flexible AI providers** — works with any OpenAI-compatible provider (Groq, OpenAI, local Ollama, etc.), just change the config
-- **Zero-dependency git hook** — installs native hooks without extra packages like husky
-- **Interactive mode** — accept, edit, or regenerate the draft before finalizing the commit
-- **Simple configuration** — set your provider, model, and lint rules in a single `.commitlintgenrc.json` file
-- **Doctor command** — diagnose your environment, config, and API connection with `clg doctor`
+- **AI-powered generation** — reads `git diff --staged` and produces a Conventional Commits draft automatically
+- **Interactive TUI** — accept, edit, retry, or write manual commits from a keyboard-driven interface
+- **Multi-language** — generate commit messages in English or Bahasa Indonesia
+- **Flexible AI providers** — works with any OpenAI-compatible provider (Groq, OpenAI, local Ollama, etc.)
+- **Retry with fallback** — automatically retries with a fallback model if the primary model fails
+- **Rate-limit handling** — respects `try again in Ns` responses from Groq with automatic retry
+- **Simple configuration** — set your provider, model, and language in a single `~/.commitlintgenrc.json` file
+- **Single static binary** — no runtime required, instant startup (~3 MiB memory)
 
 ## Tech Stack
 
-| Category | Technology |
-|---|---|
-| Runtime | Node.js v22+ |
-| Language | TypeScript |
-| Package manager | pnpm |
-| CLI framework | [Commander.js](https://github.com/tj/commander.js) |
-| Git integration | [simple-git](https://github.com/steveukx/git-js) |
-| Build tool | [Rslib](https://rslib.rs/) |
-| AI client | [`openai` SDK](https://github.com/openai/openai-node) (OpenAI-compatible, default: [Groq](https://groq.com/) + Qwen3.6-27B) |
-| Testing | [Vitest](https://vitest.dev/) |
-| Linting/formatting | ESLint + Prettier |
+| Category         | Technology                                                    |
+|------------------|---------------------------------------------------------------|
+| Language         | Rust (edition 2024)                                           |
+| Package manager  | Cargo                                                         |
+| Terminal UI      | [ratatui](https://github.com/ratatui-org/ratatui) + [crossterm](https://github.com/crossterm-rs/crossterm) |
+| HTTP client      | [reqwest](https://github.com/seanmonstar/reqwest) (rustls)   |
+| AI client        | OpenAI-compatible (default: [Groq](https://groq.com/) + Qwen3.8-27B) |
+| Text width       | [unicode-width](https://github.com/unicode-rs/unicode-width) |
 
-## Getting Started
+## Supported Platforms
 
-### Prerequisites
+Prebuilt **Rust binaries** are published to npm via the `commitlg` package. The npm package is just a shim — it detects your OS and delegates to a native binary. No Node.js runtime needed at execution time.
 
-- Node.js version 22 or newer
-- pnpm (`npm install -g pnpm`)
-- Git
+| Platform        | Architecture | Install command           |
+|-----------------|--------------|---------------------------|
+| Linux           | x86_64       | `npm i -g commitlg`       |
+| Windows         | x86_64       | `npm i -g commitlg`       |
 
-### Installation
-
-**Option 1: Use with npx (always latest, no install needed)**
+Install a specific channel:
 
 ```bash
-npx commitlg@latest generate
+npm i -g commitlg@beta     # pre-release channel (Rust binary, auto-updated)
+npm i -g commitlg@latest   # stable release (Rust binary)
 ```
 
-**Option 2: Install globally**
-
-```bash
-# Using npm
-npm install -g commitlg
-
-# Using pnpm
-pnpm install -g commitlg
-
-# Then use directly
-clg generate
-```
-
-**Option 3: Local development**
+Build from source:
 
 ```bash
 git clone https://github.com/dhodo999/commit-lint-gen.git
 cd commit-lint-gen
-pnpm install
-pnpm build
-pnpm link --global .
+cargo build --release
+./target/release/clg
 ```
 
-### Configuration
+## Usage
 
-**The tool works out of the box without any configuration** — it uses heuristic mode (pattern-based analysis) to generate commit messages.
-
-**To enable AI-powered generation**, you need to provide your own API key. We recommend using [Groq](https://groq.com/) as it offers a free tier with fast inference.
-
-**Quick Setup (Recommended):**
-
-Run the interactive configuration wizard:
+### 1. Configure API key
 
 ```bash
-npx commitlg@latest config
+clg config
 ```
 
-This will guide you through:
-- Choosing your AI provider (Groq/OpenAI)
-- Entering your API key
-- Selecting a model
+This creates `~/.commitlintgenrc.json` with your Groq API key, model, and language preference.
 
-The wizard creates a `.commitlintgenrc.json` file in your project.
+### 2. Stage your changes and run
 
-**Manual Configuration:**
+```bash
+git add .
+clg
+```
 
-**Method 1: Project-level config file** (recommended for team projects)
+The TUI opens with a generated commit message. Use the menu:
 
-Create `.commitlintgenrc.json` in your project root:
+| Key | Action |
+|-----|--------|
+| **Enter** | Commit with the generated message |
+| **e** | Edit the message |
+| **r** | Retry — regenerate a new suggestion |
+| **l** | Switch language (EN ↔ ID) |
+| **m** | Manual mode — write your own commit message |
+| **q** | Quit without committing |
+
+Arrow keys **← →** navigate the menu. Arrow keys **↑ ↓** navigate inside the editor.
+
+### Manual commit
+
+Select **Manual** from the menu, type your commit message, and press Enter to commit directly.
+
+## Configuration
+
+The config file lives at `~/.commitlintgenrc.json`:
 
 ```json
 {
-  "apiKey": "your_groq_api_key_here",
   "aiProvider": "groq",
+  "apiKey": "your_groq_api_key_here",
   "baseURL": "https://api.groq.com/openai/v1",
-  "model": "qwen/qwen3.6-27b"
+  "language": "en",
+  "model": "qwen/qwen3.8-27b"
 }
-```
-
-**Method 2: Environment variable** (for personal/local use)
-
-```bash
-# Linux/Mac
-export GROQ_API_KEY=your_api_key_here
-
-# Windows (PowerShell)
-$env:GROQ_API_KEY="your_api_key_here"
-
-# Or create a .env file
-echo "GROQ_API_KEY=your_api_key_here" > .env
 ```
 
 **Using other AI providers:**
 
-The tool supports any OpenAI-compatible API. To use a different provider, adjust your config:
-
 ```json
 {
   "apiKey": "your_api_key",
-  "aiProvider": "openai",
   "baseURL": "https://api.openai.com/v1",
-  "model": "gpt-4"
+  "model": "gpt-4o-mini"
 }
 ```
 
-**Without API key:** The tool falls back to heuristic mode, which analyzes file patterns to generate commit messages.
+Any OpenAI-compatible API works. Change `baseURL` and `model` to match your provider.
 
+## Performance
 
-### Usage
-
-**Recommended Workflow:**
-
-1. **One-time setup** - Install the validation hook:
-
-```bash
-cd /path/to/your-project
-clg init
-```
-
-This installs a `commit-msg` hook that validates all commit messages against conventional commits format.
-
-2. **Generate commits interactively** - Run `clg generate` to create AI-powered commit messages:
-
-```bash
-git add .
-clg generate
-```
-
-The tool generates a draft commit message with an interactive prompt:
-
-- **[Enter]** - Accept and commit immediately (no editor)
-- **[e]** - Edit the message
-- **[r]** - Regenerate with a new suggestion
-- **[m]** - Manual mode (pick type/scope/description yourself)
-- **[q]** - Cancel
-
-3. **Or write manually** - The hook validates any commit:
-
-```bash
-git commit -m "feat(api): add user authentication"
-```
-
-If the message doesn't follow conventional commits format, the commit will be rejected with specific error messages.
-
-#### CLI Commands
-
-```bash
-# Generate commit message interactively (AI with fallback to heuristic)
-clg generate
-
-# Auto-commit without interactive prompt
-clg generate -y
-clg generate --yes
-
-# Force heuristic mode (skip AI even if API key exists)
-clg generate -H
-clg generate --heuristic
-
-# Combine flags
-clg generate -y -H              # Auto-commit with heuristic only
-
-# Validate a commit message
-clg lint "feat(api): add user authentication"
-
-# Analyze recent commit history for conventional commit compliance
-clg audit                       # Analyze last 20 commits (default)
-clg audit -n 50                 # Analyze last 50 commits
-clg audit --number 10           # Analyze last 10 commits
-
-# Interactive configuration setup
-clg config                      # Guided setup for AI provider and API key
-
-# Check environment, config, and API connection
-clg doctor
-
-# Install git hook
-clg init
-
-# Remove git hook from current repository
-clg uninstall
-
-# Show version
-clg --version
-clg -V
-
-# Show help
-clg --help
-clg -h
-
-# Show help for specific command
-clg generate --help
-clg lint --help
-```
-
-#### Interactive Mode Keys
-
-When running `clg generate`, you'll see these options:
-
-- **[Enter]** - Accept the suggested message and commit
-- **[e]** - Edit the message in your editor
-- **[r]** - Regenerate a new suggestion
-- **[m]** - Manual mode (pick type/scope/description step-by-step)
-- **[q]** - Cancel and exit without committing
-
-## Uninstalling
-
-**1. Remove git hooks from any repositories:**
-
-```bash
-cd /path/to/your-project
-clg uninstall
-```
-
-**2. Unlink the global CLI:**
-
-```bash
-cd /path/to/commit-lint-gen
-pnpm run uninstall
-```
-
-Or from anywhere:
-
-```bash
-# If installed globally
-npm uninstall -g commitlg
-# or
-pnpm uninstall -g commitlg
-
-# If linked from local dev
-pnpm unlink --global commitlg
-```
-
-**3. Verify:**
-
-```bash
-clg --version  # Should show "command not found"
-```
-
-## Development
-
-```bash
-pnpm dev       # run the CLI directly from source (no build needed)
-pnpm build     # build to dist/
-pnpm test      # run tests
-pnpm lint      # check code style
-```
-
-### Testing
-
-The project includes comprehensive test coverage with 37 tests across:
-
-- **Config loader** - Environment variables, default values, file loading
-- **Linter rules** - Commit parsing, type/scope/length/description validation
-- **Linter validation** - Full message validation, error collection
-- **AI generator** - AI commit generation, error handling
-- **Heuristic generator** - Pattern detection, type/scope inference
-
-Run tests with:
-
-```bash
-pnpm test        # run all tests
-pnpm test --watch  # run tests in watch mode
-```
+| Metric                       | Value                    |
+|------------------------------|--------------------------|
+| Cold-start                   | < 5 ms                   |
+| Resident memory (idle)       | ~3-5 MiB                 |
+| Disk size (release, stripped)| ~3 MiB                   |
+| System dependencies          | None                     |
+| API latency (Groq, cold)     | ~400 ms                  |
 
 ## Contributing
 
-This project is open source and welcomes contributions — whether it's adding new lint rules, support for other AI providers, or fixing bugs. Feel free to open an issue or pull request.
+This project is open source and welcomes contributions. Feel free to open an issue or pull request.
 
 ## License
 
