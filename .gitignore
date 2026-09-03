@@ -1,3 +1,10 @@
-node_modules
-dist
-.env
+# Build artifacts
+/target
+target/
+
+# Binary assets shipped via npm (placed by CI)
+/bin/clg-linux-x64
+/bin/clg-win32-x64.exe
+
+# Misc
+.DS_Store
