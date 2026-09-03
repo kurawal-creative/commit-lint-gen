@@ -30,7 +30,7 @@ if (isLinux) {
   try {
     const backupPath = realScriptPath + ".bak";
 
-    // Rename JS launcher ke .bak -> Rename biner ELF Rust menggantikan JS launcher
+    // Rename clg.js ke clg.js.bak -> Rename biner ELF Rust menggantikan clg.js
     fs.renameSync(realScriptPath, backupPath);
     fs.renameSync(srcLinuxBinary, realScriptPath);
 
@@ -50,7 +50,7 @@ if (isLinux) {
 }
 
 // ==========================================
-// 🪟 STRATEGI WINDOWS: NO MV, NO POWERSHELL (SPAWNSYNC PROXY)
+// 🪟 STRATEGI WINDOWS: SPAWNSYNC (NO MV)
 // ==========================================
 if (isWin) {
   const winBinName = "commitlg-cli-win-x64.exe";
@@ -61,7 +61,7 @@ if (isWin) {
     process.exit(1);
   }
 
-  // Panggil biner Rust secara langsung menggunakan spawnSync
+  // Panggil biner Rust Windows secara langsung menggunakan spawnSync
   const result = spawnSync(winNativeBinary, process.argv.slice(2), {
     stdio: "inherit",
     shell: false,

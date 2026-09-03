@@ -130,7 +130,7 @@ jobs:
           mkdir -p bin
           cp artifacts/clg-linux-x64/clg.exe bin/commitlg-cli-linux-x64
           cp artifacts/clg-win32-x64/clg.exe bin/commitlg-cli-win-x64.exe
-          chmod +x bin/commitlg-cli-linux-x64 bin/clg.exe
+          chmod +x bin/commitlg-cli-linux-x64 bin/clg.js
           ls -la bin/
 
       - name: Setup node

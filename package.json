@@ -1,10 +1,10 @@
 {
   "name": "commitlg",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A simple git commit generator",
   "license": "MIT",
   "bin": {
-    "clg": "bin/clg.exe"
+    "clg": "./bin/clg.js"
   },
   "files": [
     "bin",
