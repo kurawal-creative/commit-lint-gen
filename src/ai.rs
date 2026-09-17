@@ -41,68 +41,49 @@ pub async fn generate_commit(
 
     let client = Client::new();
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
-    // ponytail: fallback ke 3.6 kalau model utama error
-    let mut models = vec![model.to_string()];
-    if model != "qwen/qwen3.6-27b" {
-        models.push("qwen/qwen3.6-27b".to_string());
-    }
-    let mut last_err = String::new();
-    for m in &models {
-        let mut payload = payload.clone();
-        payload.model = m.clone();
-        // ponytail: retry 429 mengikuti "try again in Ns" dari Groq (max 3x)
-        let mut attempt = 0;
-        let res = loop {
-            let res = client
-                .post(&url)
-                .bearer_auth(api_key)
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-            if res.status().as_u16() != 429 || attempt >= 3 {
-                break res;
-            }
-            let body = res.text().await.unwrap_or_default();
-            let wait = parse_retry_after(&body).unwrap_or(20);
-            tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
-            attempt += 1;
-        };
-
-        if !res.status().is_success() {
-            let status = res.status();
-            let body = res.text().await.unwrap_or_default();
-            last_err = format!(
-                "Groq API {} ({}): {}",
-                status,
-                m,
-                body.chars().take(200).collect::<String>()
-            );
-            continue;
-        }
-
-        match res
-            .json::<ChatCompletionResponse>()
+    // ponytail: retry 429 mengikuti "try again in Ns" dari Groq (max 3x)
+    let mut attempt = 0;
+    let res = loop {
+        let res = client
+            .post(&url)
+            .bearer_auth(api_key)
+            .json(&payload)
+            .send()
             .await
-            .map_err(|e| e.to_string())
-        {
-            Err(e) => last_err = e,
-            Ok(data) => {
-                let raw = data
-                    .choices
-                    .first()
-                    .map(|c| c.message.content.as_str())
-                    .unwrap_or("");
-                let cleaned = clean(raw);
-                if cleaned.is_empty() {
-                    last_err = "Respon kosong.".into();
-                } else {
-                    return Ok(cleaned);
-                }
-            }
+            .map_err(|e| e.to_string())?;
+        if res.status().as_u16() != 429 || attempt >= 3 {
+            break res;
         }
+        let body = res.text().await.unwrap_or_default();
+        let wait = parse_retry_after(&body).unwrap_or(20);
+        tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+        attempt += 1;
+    };
+
+    if !res.status().is_success() {
+        let status = res.status();
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!(
+            "Groq API {}: {}",
+            status,
+            body.chars().take(200).collect::<String>()
+        ));
     }
-    Err(last_err)
+
+    let data = res
+        .json::<ChatCompletionResponse>()
+        .await
+        .map_err(|e| e.to_string())?;
+    let raw = data
+        .choices
+        .first()
+        .map(|c| c.message.content.as_str())
+        .unwrap_or("");
+    let cleaned = clean(raw);
+    if cleaned.is_empty() {
+        return Err("Respon kosong.".into());
+    }
+    Ok(cleaned)
 }
 
 fn parse_retry_after(body: &str) -> Option<u64> {
