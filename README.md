@@ -12,7 +12,6 @@ Developers often write lazy commit messages ("fix bug", "update", "wip") because
 - **Interactive TUI** — accept, edit, retry, or write manual commits from a keyboard-driven interface
 - **Multi-language** — generate commit messages in English or Bahasa Indonesia
 - **Flexible AI providers** — works with any OpenAI-compatible provider (Groq, OpenAI, local Ollama, etc.)
-- **Retry with fallback** — automatically retries with a fallback model if the primary model fails
 - **Rate-limit handling** — respects `try again in Ns` responses from Groq with automatic retry
 - **Simple configuration** — set your provider, model, and language in a single `~/.commitlintgenrc.json` file
 - **Single static binary** — no runtime required, instant startup (~3 MiB memory)
