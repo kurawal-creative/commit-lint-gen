@@ -163,24 +163,22 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build ${{ matrix.os }} x64
+    name: Build ${{ matrix.os }}
     needs: version
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
+            targets: x86_64-unknown-linux-musl
             artifact: clg-linux-x64
           - os: windows-latest
-            target: x86_64-pc-windows-msvc
+            targets: x86_64-pc-windows-msvc
             artifact: clg-win32-x64
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-            artifact: clg-darwin-x64
+          # Satu runner arm64 membangun kedua arsitektur macOS.
           - os: macos-14
-            target: aarch64-apple-darwin
-            artifact: clg-darwin-arm64
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+            artifact: clg-mac-darwin
     steps:
       - uses: actions/checkout@v4
         with:
@@ -190,10 +188,10 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.targets }}
 
       - name: Install musl toolchain
-        if: matrix.target == 'x86_64-unknown-linux-musl'
+        if: contains(matrix.targets, 'x86_64-unknown-linux-musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       # Cross-platform, aman di BSD sed (macOS) dan PowerShell (Windows).
@@ -228,35 +226,51 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release
-        run: cargo build --release --target ${{ matrix.target }}
+        shell: bash
         env:
+          TARGETS: ${{ matrix.targets }}
           CARGO_PROFILE_RELEASE_OPT_LEVEL: z
           CARGO_PROFILE_RELEASE_LTO: true
           CARGO_PROFILE_RELEASE_STRIP: true
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
+        run: |
+          set -euo pipefail
+          for target in ${TARGETS//,/ }; do
+            cargo build --release --target "$target"
+          done
 
       # Binary name mengikuti [[bin]]/package di Cargo.toml (saat ini `clg`).
-      - name: Collect binary
+      - name: Collect binaries
         shell: bash
+        env:
+          TARGETS: ${{ matrix.targets }}
         run: |
+          set -euo pipefail
           mkdir -p artifacts
-          BIN=clg
-          if [[ "${{ matrix.os }}" == windows* ]]; then
-            BIN=clg.exe
-          fi
-          if [ ! -f "target/${{ matrix.target }}/release/$BIN" ]; then
-            echo "Binary '$BIN' not found for ${{ matrix.target }}" >&2
-            ls -la "target/${{ matrix.target }}/release/" || true
-            exit 1
-          fi
-          cp "target/${{ matrix.target }}/release/$BIN" "artifacts/clg.exe"
+          for target in ${TARGETS//,/ }; do
+            case "$target" in
+              *windows*) BIN=clg.exe ;;
+              *) BIN=clg ;;
+            esac
+            if [ ! -f "target/$target/release/$BIN" ]; then
+              echo "Binary '$BIN' not found for $target" >&2
+              ls -la "target/$target/release/" || true
+              exit 1
+            fi
+            case "$target" in
+              aarch64-apple-darwin) OUT=clg-darwin-arm64 ;;
+              x86_64-apple-darwin) OUT=clg-darwin-x64 ;;
+              *) OUT=clg.exe ;;
+            esac
+            cp "target/$target/release/$BIN" "artifacts/$OUT"
+          done
           ls -la artifacts/
 
-      - name: Upload binary
+      - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: artifacts/clg.exe
+          path: artifacts/
 
   # Setelah release: asset harus ada sebelum paket npm bisa memasang dirinya.
   publish:
@@ -311,8 +325,8 @@ jobs:
           mkdir -p dist
           cp artifacts/clg-linux-x64/clg.exe dist/commitlg-cli-linux-x64
           cp artifacts/clg-win32-x64/clg.exe dist/commitlg-cli-win32-x64.exe
-          cp artifacts/clg-darwin-x64/clg.exe dist/commitlg-cli-darwin-x64
-          cp artifacts/clg-darwin-arm64/clg.exe dist/commitlg-cli-darwin-arm64
+          cp artifacts/clg-mac-darwin/clg-darwin-x64 dist/commitlg-cli-darwin-x64
+          cp artifacts/clg-mac-darwin/clg-darwin-arm64 dist/commitlg-cli-darwin-arm64
           chmod +x dist/commitlg-cli-* dist/*.exe
           ls -la dist/
 
