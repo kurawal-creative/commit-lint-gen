@@ -175,10 +175,10 @@ jobs:
           - os: windows-latest
             targets: x86_64-pc-windows-msvc
             artifact: clg-win32-x64
-          # Satu runner arm64 membangun kedua arsitektur macOS.
-          - os: macos-14
-            targets: aarch64-apple-darwin,x86_64-apple-darwin
-            artifact: clg-mac-darwin
+          # macOS sementara dinonaktifkan.
+          # - os: macos-14
+          #   targets: aarch64-apple-darwin,x86_64-apple-darwin
+          #   artifact: clg-mac-darwin
     steps:
       - uses: actions/checkout@v7
         with:
@@ -258,8 +258,9 @@ jobs:
               exit 1
             fi
             case "$target" in
-              aarch64-apple-darwin) OUT=clg-darwin-arm64 ;;
-              x86_64-apple-darwin) OUT=clg-darwin-x64 ;;
+              # macOS sementara dinonaktifkan.
+              # aarch64-apple-darwin) OUT=clg-darwin-arm64 ;;
+              # x86_64-apple-darwin) OUT=clg-darwin-x64 ;;
               *) OUT=clg.exe ;;
             esac
             cp "target/$target/release/$BIN" "artifacts/$OUT"
@@ -325,8 +326,9 @@ jobs:
           mkdir -p dist
           cp artifacts/clg-linux-x64/clg.exe dist/commitlg-cli-linux-x64
           cp artifacts/clg-win32-x64/clg.exe dist/commitlg-cli-win32-x64.exe
-          cp artifacts/clg-mac-darwin/clg-darwin-x64 dist/commitlg-cli-darwin-x64
-          cp artifacts/clg-mac-darwin/clg-darwin-arm64 dist/commitlg-cli-darwin-arm64
+          # macOS sementara dinonaktifkan.
+          # cp artifacts/clg-mac-darwin/clg-darwin-x64 dist/commitlg-cli-darwin-x64
+          # cp artifacts/clg-mac-darwin/clg-darwin-arm64 dist/commitlg-cli-darwin-arm64
           chmod +x dist/commitlg-cli-* dist/*.exe
           ls -la dist/
 

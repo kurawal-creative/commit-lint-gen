@@ -39,8 +39,8 @@ Prebuilt **Rust binaries** are attached to [GitHub Releases](https://github.com/
 |-----------------|--------------|---------------------------|
 | Linux           | x86_64       | `npm i -g commitlg`       |
 | Windows         | x86_64       | `npm i -g commitlg`       |
-| macOS           | Intel (x64)  | `npm i -g commitlg`       |
-| macOS           | Apple Silicon (arm64) | `npm i -g commitlg` |
+
+macOS builds are temporarily disabled while the release pipeline is being reworked; only Linux and Windows binaries are published for now.
 
 Install a specific channel:
 
