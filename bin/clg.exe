@@ -1,5 +1,2 @@
-#!/usr/bin/env node
-// Placeholder agar npm membuat shim `clg` saat install.
-// postinstall mengganti file ini dengan binary native dari GitHub release.
-console.error('commitlg: binary belum terpasang. Jalankan: npm rebuild commitlg');
-process.exit(1);
+echo "commitlg: binary belum terpasang. Jalankan: npm rebuild commitlg" >&2
+exit 1
