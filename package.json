@@ -9,6 +9,9 @@
   "scripts": {
     "postinstall": "node scripts/install.js"
   },
+  "engines": {
+    "node": ">=18"
+  },
   "files": [
     "bin",
     "scripts",

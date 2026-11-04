@@ -33,7 +33,7 @@ Developers often write lazy commit messages ("fix bug", "update", "wip") because
 
 ## Supported Platforms
 
-Prebuilt **Rust binaries** are published to npm via the `commitlg` package. A `postinstall` script picks the matching binary for your platform and exposes it as `bin/clg.exe` — a native executable on every OS despite the `.exe` suffix. No Node.js runtime is needed at execution time.
+Prebuilt **Rust binaries** are attached to [GitHub Releases](https://github.com/kurawal-creative/commit-lint-gen/releases). The `commitlg` package is published to npm without binaries; its `postinstall` script downloads the matching asset for your platform from the release that matches the installed version (beta versions use the prerelease channel) and exposes it as `bin/clg.exe` — a native executable on every OS despite the `.exe` suffix. No Node.js runtime is needed at execution time.
 
 | Platform        | Architecture | Install command           |
 |-----------------|--------------|---------------------------|
@@ -191,8 +191,10 @@ This project is open source and welcomes contributions. Feel free to open an iss
 
 Publishing is fully automated — just push:
 
-- Push/merge to `beta` → CI publishes `x.y.z-beta.n` with the `beta` tag (`npm i -g commitlg@beta`). The core is always above the last stable release; `n` increments per beta publish.
-- Push/merge to `main` → CI publishes a stable `x.y.z` with the `latest` tag (`npm i -g commitlg`).
+- Push/merge to `beta` → CI creates a GitHub prerelease tagged `vx.y.z-beta.n` and publishes `x.y.z-beta.n` to npm with the `beta` tag (`npm i -g commitlg@beta`). The core is always above the last stable release; `n` increments per beta publish.
+- Push/merge to `main` → CI creates a GitHub release tagged `vx.y.z` and publishes a stable `x.y.z` to npm with the `latest` tag (`npm i -g commitlg`).
+
+The release is created before the npm publish, so `postinstall` can download its assets immediately. Both npm and Git tags are checked when computing the next version.
 
 `Cargo.toml` remains the version referenced in the repo, but CI injects the computed version into `Cargo.toml` and `package.json` before building/publishing, and the binary embeds it. A manual `version` bump in `Cargo.toml` is honored when it is higher. Workflow runs are serialized so two branches cannot publish the same version.
 

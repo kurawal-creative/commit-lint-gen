@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       branch:
-        description: 'Branch to rebuild (npm tag: beta → beta, main → latest)'
+        description: 'Branch to rebuild (channel: beta → prerelease, main → latest)'
         type: choice
         required: true
         default: 'beta'
@@ -18,9 +18,9 @@ on:
 permissions:
   contents: read
 
-# Jangan pernah dua publish berjalan bersamaan: resolusi versi baca npm registry.
+# Jangan pernah dua publish berjalan bersamaan: resolusi versi baca git tag.
 concurrency:
-  group: npm-publish
+  group: release
   cancel-in-progress: false
 
 jobs:
@@ -40,7 +40,7 @@ jobs:
         with:
           node-version: 24
 
-      - name: Resolve version (auto-bump from npm)
+      - name: Resolve version (auto-bump from git tags)
         id: resolve
         run: |
           set -euo pipefail
@@ -99,6 +99,12 @@ jobs:
           [ -n "$LATEST" ] || LATEST="0.0.0"
           BETA=$(npm_version_or_empty "commitlg@beta")
 
+          # Tag GitHub juga dihitung supaya rilis yang gagal publish npm tetap dilewati.
+          TAG_LATEST=$(git tag -l 'v*' | grep -Ev -- '-' | sed 's/^v//' | sort -V | tail -1 || true)
+          if [ -n "$TAG_LATEST" ] && [ "$(printf '%s\n%s\n' "$TAG_LATEST" "$LATEST" | sort -V | tail -1)" = "$TAG_LATEST" ]; then
+            LATEST="$TAG_LATEST"
+          fi
+
           LATEST_CORE=$(core_of "$LATEST")
           CARGO_CORE=$(core_of "$CARGO_V")
           BUMPED=$(bump_patch "$LATEST_CORE")
@@ -133,7 +139,9 @@ jobs:
           ATTEMPTS=0
           while :; do
             PUBLISHED=$(npm_version_or_empty "commitlg@${V}") || exit 1
-            [ -z "$PUBLISHED" ] && break
+            if [ -z "$PUBLISHED" ] && ! git rev-parse -q --verify "refs/tags/v${V}" >/dev/null; then
+              break
+            fi
             ATTEMPTS=$((ATTEMPTS + 1))
             if [ "$ATTEMPTS" -gt 50 ]; then
               echo "Could not find a free version near v$V" >&2
@@ -250,9 +258,10 @@ jobs:
           name: ${{ matrix.artifact }}
           path: artifacts/clg.exe
 
+  # Setelah release: asset harus ada sebelum paket npm bisa memasang dirinya.
   publish:
     name: Publish to npm
-    needs: [version, build]
+    needs: [version, build, release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -260,22 +269,7 @@ jobs:
           ref: ${{ inputs.branch || github.ref_name }}
           fetch-depth: 0
 
-      - name: Download binaries
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Stage package
-        shell: bash
-        run: |
-          mkdir -p bin
-          cp artifacts/clg-linux-x64/clg.exe bin/commitlg-cli-linux-x64
-          cp artifacts/clg-win32-x64/clg.exe bin/commitlg-cli-win-x64.exe
-          cp artifacts/clg-darwin-x64/clg.exe bin/commitlg-cli-darwin-x64
-          cp artifacts/clg-darwin-arm64/clg.exe bin/commitlg-cli-darwin-arm64
-          chmod +x bin/commitlg-cli-*
-          ls -la bin/
-
+      # Binary tidak dibundel: postinstall mengunduh asset dari GitHub release.
       - name: Setup node
         uses: actions/setup-node@v4
         with:
@@ -297,3 +291,41 @@ jobs:
           # Auth npm sudah disiapkan setup-node (registry-url + NODE_AUTH_TOKEN).
           npm version "${VERSION}" --no-git-tag-version --allow-same-version
           npm publish --tag "${NPM_TAG}"
+
+  release:
+    name: GitHub Release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      # Nama asset harus sama dengan BINARIES di scripts/install.js.
+      - name: Stage assets
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp artifacts/clg-linux-x64/clg.exe dist/commitlg-cli-linux-x64
+          cp artifacts/clg-win32-x64/clg.exe dist/commitlg-cli-win32-x64.exe
+          cp artifacts/clg-darwin-x64/clg.exe dist/commitlg-cli-darwin-x64
+          cp artifacts/clg-darwin-arm64/clg.exe dist/commitlg-cli-darwin-arm64
+          chmod +x dist/commitlg-cli-* dist/*.exe
+          ls -la dist/
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+          TAG: ${{ needs.version.outputs.tag }}
+          TARGET: ${{ inputs.branch || github.ref_name }}
+        run: |
+          set -euo pipefail
+          args=(--target "$TARGET" --title "v$VERSION" --generate-notes)
+          if [ "$TAG" = "beta" ]; then
+            args+=(--prerelease)
+          fi
+          gh release create "v$VERSION" "${args[@]}" dist/*
