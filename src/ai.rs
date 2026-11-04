@@ -8,6 +8,7 @@ pub async fn generate_commit(
     base_url: &str,
     model: &str,
     is_indo: bool,
+    previous: Option<&str>,
 ) -> Result<String, String> {
     let lang = if is_indo { "Indonesian" } else { "English" };
 
@@ -21,6 +22,7 @@ pub async fn generate_commit(
         lang = lang
     );
 
+    let user = build_user_content(diff, previous);
     let payload = ChatCompletionRequest {
         model: model.to_string(),
         messages: vec![
@@ -30,7 +32,7 @@ pub async fn generate_commit(
             },
             crate::types::ChatMessage {
                 role: "user".into(),
-                content: format!("Diff:\n{}", diff),
+                content: user,
             },
         ],
         temperature: 0.2,
@@ -86,6 +88,19 @@ pub async fn generate_commit(
     Ok(cleaned)
 }
 
+fn build_user_content(diff: &str, previous: Option<&str>) -> String {
+    let mut user = format!("Diff:\n{}", diff);
+    if let Some(previous) = previous
+        && !previous.trim().is_empty()
+    {
+        user.push_str(&format!(
+            "\n\nPrevious draft (improve it, keep the intent):\n{}",
+            previous
+        ));
+    }
+    user
+}
+
 fn parse_retry_after(body: &str) -> Option<u64> {
     body.find("try again in ").and_then(|i| {
         body[i + 13..]
@@ -108,4 +123,40 @@ fn clean(input: &str) -> String {
     };
     // tanpa truncate: serahkan wrap ke display (TUI/leftover), isi tetap utuh
     stripped.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cleans_thinking_tags() {
+        assert_eq!(clean("</think>feat: add x"), "feat: add x");
+        assert_eq!(clean("reasoning...</think>\nfeat: add x\n"), "feat: add x");
+        assert_eq!(clean("  feat: add x  "), "feat: add x");
+    }
+
+    #[test]
+    fn parses_retry_after_seconds() {
+        assert_eq!(
+            parse_retry_after("Please try again in 20.5s. Visit ..."),
+            Some(22)
+        );
+        assert_eq!(parse_retry_after("try again in 3s"), Some(4));
+        assert_eq!(parse_retry_after("no hint"), None);
+    }
+
+    #[test]
+    fn user_content_includes_previous_draft_only_when_present() {
+        let plain = build_user_content("+new line", None);
+        assert_eq!(plain, "Diff:\n+new line");
+        assert!(!plain.contains("Previous draft"));
+
+        let with_prev = build_user_content("+new line", Some("feat: add x"));
+        assert!(with_prev.contains("Previous draft"));
+        assert!(with_prev.contains("feat: add x"));
+
+        let blank = build_user_content("+new line", Some("   "));
+        assert!(!blank.contains("Previous draft"));
+    }
 }

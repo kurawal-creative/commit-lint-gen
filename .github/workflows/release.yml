@@ -1,12 +1,13 @@
 name: Publish
 
 on:
+  # Setiap push ke beta/main otomatis publish versi baru (diminta eksplisit).
   push:
-    branches: [main]
+    branches: [beta, main]
   workflow_dispatch:
     inputs:
       branch:
-        description: 'Branch to rebuild (npm tag: beta → beta, main → latest)'
+        description: 'Branch to rebuild (channel: beta → prerelease, main → latest)'
         type: choice
         required: true
         default: 'beta'
@@ -15,7 +16,12 @@ on:
           - main
 
 permissions:
-  contents: write
+  contents: read
+
+# Jangan pernah dua publish berjalan bersamaan: resolusi versi baca git tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   version:
@@ -23,50 +29,158 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.branch || github.ref_name }}
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
 
-      - name: Resolve version
+      - name: Resolve version (auto-bump from git tags)
         id: resolve
         run: |
           set -euo pipefail
           BRANCH="${{ inputs.branch || github.ref_name }}"
-          if [ "$BRANCH" = "beta" ]; then
-            # beta manual: lanjut dari versi beta terakhir di npm, bukan Cargo.toml/package.json
-            BASE=$(npm view commitlg@beta version 2>/dev/null || echo "0.0.0")
-            BASE=${BASE#v}
-            MAJOR=${BASE%%.*}; REST=${BASE#*.}; MINOR=${REST%%.*}; PATCH=${REST#*.}
-            V="$MAJOR.$MINOR.$((PATCH + 1))"
-            echo "Beta: lanjut dari $BASE -> v$V"
-          else
-            V=$(grep '^version' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-            # sync package.json in the workspace so both match before publishing
-            sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$V\"/" package.json
-            echo "Releasing v$V"
+          if [ "$BRANCH" = "main" ]; then TAG=latest; else TAG=beta; fi
+
+          # Versi dari section [package] saja (aman untuk workspace / version lain).
+          cargo_version() {
+            node -e '
+          const fs = require("fs");
+          let inPackage = false;
+          for (const line of fs.readFileSync("Cargo.toml", "utf8").split("\n")) {
+            if (/^\[package\]/.test(line)) inPackage = true;
+            else if (/^\[/.test(line)) inPackage = false;
+            else if (inPackage && /^version\s*=/.test(line)) {
+              process.stdout.write(line.split("=").slice(1).join("=").trim().replace(/^"|"$/g, ""));
+              break;
+            }
+          }'
+          }
+
+          # Output kosong = package/tag belum ada (404). Error lain menggagalkan job.
+          npm_version_or_empty() {
+            local ref="$1" err
+            err=$(mktemp)
+            if npm view "$ref" version 2>"$err"; then
+              rm -f "$err"
+              return 0
+            fi
+            if grep -q 'E404' "$err"; then
+              rm -f "$err"
+              return 0
+            fi
+            cat "$err" >&2
+            rm -f "$err"
+            return 1
+          }
+
+          CARGO_V=$(cargo_version)
+          if [ -z "$CARGO_V" ]; then
+            echo "Could not read [package] version from Cargo.toml" >&2
+            exit 1
           fi
+
+          core_of() {
+            local value="${1#v}"
+            value="${value%%-*}"
+            value="${value%%+*}"
+            printf '%s' "$value"
+          }
+          bump_patch() {
+            printf '%s' "$1" | awk -F. '{ printf "%s.%s.%d", $1, $2, $3 + 1 }'
+          }
+
+          LATEST=$(npm_version_or_empty "commitlg@latest")
+          [ -n "$LATEST" ] || LATEST="0.0.0"
+          BETA=$(npm_version_or_empty "commitlg@beta")
+
+          # Tag GitHub juga dihitung supaya rilis yang gagal publish npm tetap dilewati.
+          TAG_LATEST=$(git tag -l 'v*' | grep -Ev -- '-' | sed 's/^v//' | sort -V | tail -1 || true)
+          if [ -n "$TAG_LATEST" ] && [ "$(printf '%s\n%s\n' "$TAG_LATEST" "$LATEST" | sort -V | tail -1)" = "$TAG_LATEST" ]; then
+            LATEST="$TAG_LATEST"
+          fi
+
+          LATEST_CORE=$(core_of "$LATEST")
+          CARGO_CORE=$(core_of "$CARGO_V")
+          BUMPED=$(bump_patch "$LATEST_CORE")
+
+          # Core stabil berikutnya: patch dari latest, atau Cargo.toml kalau lebih tinggi.
+          CORE=$(printf '%s\n%s\n' "$BUMPED" "$CARGO_CORE" | sort -V | tail -1)
+          case "${CORE//./}" in
+            ''|*[!0-9]*)
+              echo "Unparseable core version: $CORE (latest=$LATEST, cargo=$CARGO_V)" >&2
+              exit 1
+              ;;
+          esac
+
+          if [ "$TAG" = "beta" ]; then
+            # Beta selalu di atas stable terakhir, format <core>-beta.<n>.
+            N=0
+            case "$BETA" in
+              *-beta.*)
+                BETA_CORE=$(core_of "$BETA")
+                BETA_N=${BETA##*-beta.}
+                if [ "$BETA_CORE" = "$CORE" ] && [ -n "$BETA_N" ] && [ -z "${BETA_N//[0-9]/}" ]; then
+                  N=$BETA_N
+                fi
+                ;;
+            esac
+            V="$CORE-beta.$((N + 1))"
+          else
+            V="$CORE"
+          fi
+
+          # Pastikan versi belum pernah dipakai tag mana pun.
+          ATTEMPTS=0
+          while :; do
+            PUBLISHED=$(npm_version_or_empty "commitlg@${V}") || exit 1
+            if [ -z "$PUBLISHED" ] && ! git rev-parse -q --verify "refs/tags/v${V}" >/dev/null; then
+              break
+            fi
+            ATTEMPTS=$((ATTEMPTS + 1))
+            if [ "$ATTEMPTS" -gt 50 ]; then
+              echo "Could not find a free version near v$V" >&2
+              exit 1
+            fi
+            case "$V" in
+              *-beta.*)
+                N=${V##*-beta.}
+                V="${V%-beta.*}-beta.$((N + 1))"
+                ;;
+              *)
+                V=$(bump_patch "$V")
+                ;;
+            esac
+          done
+
+          echo "Branch: $BRANCH | tag: $TAG | latest: v$LATEST | beta: v${BETA:-none} | Cargo.toml: v$CARGO_V -> v$V"
           echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build ${{ matrix.os }} x64
+    name: Build ${{ matrix.os }}
+    needs: version
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            targets: x86_64-unknown-linux-musl
             artifact: clg-linux-x64
           - os: windows-latest
-            target: x86_64-pc-windows-msvc
+            targets: x86_64-pc-windows-msvc
             artifact: clg-win32-x64
+          # macOS sementara dinonaktifkan.
+          # - os: macos-14
+          #   targets: aarch64-apple-darwin,x86_64-apple-darwin
+          #   artifact: clg-mac-darwin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.branch || github.ref_name }}
           fetch-depth: 0
@@ -74,72 +188,105 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.targets }}
+
+      - name: Install musl toolchain
+        if: contains(matrix.targets, 'x86_64-unknown-linux-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      # Cross-platform, aman di BSD sed (macOS) dan PowerShell (Windows).
+      - name: Apply release version
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          node -e '
+          const fs = require("fs");
+          const version = process.env.VERSION;
+          let inPackage = false;
+          const lines = fs.readFileSync("Cargo.toml", "utf8").split("\n").map((line) => {
+            if (/^\[package\]/.test(line)) inPackage = true;
+            else if (/^\[/.test(line)) inPackage = false;
+            else if (inPackage && /^version\s*=/.test(line)) return `version = "${version}"`;
+            return line;
+          });
+          fs.writeFileSync("Cargo.toml", lines.join("\n"));
+          '
+          node -e '
+          const fs = require("fs");
+          let inPackage = false;
+          for (const line of fs.readFileSync("Cargo.toml", "utf8").split("\n")) {
+            if (/^\[package\]/.test(line)) inPackage = true;
+            else if (/^\[/.test(line)) inPackage = false;
+            else if (inPackage && /^version\s*=/.test(line)) { console.log(line); break; }
+          }
+          '
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
       - name: Build release
-        run: cargo build --release --target ${{ matrix.target }}
+        shell: bash
         env:
+          TARGETS: ${{ matrix.targets }}
           CARGO_PROFILE_RELEASE_OPT_LEVEL: z
           CARGO_PROFILE_RELEASE_LTO: true
           CARGO_PROFILE_RELEASE_STRIP: true
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
-
-      - name: Collect binary
-        shell: bash
         run: |
+          set -euo pipefail
+          for target in ${TARGETS//,/ }; do
+            cargo build --release --target "$target"
+          done
+
+      # Binary name mengikuti [[bin]]/package di Cargo.toml (saat ini `clg`).
+      - name: Collect binaries
+        shell: bash
+        env:
+          TARGETS: ${{ matrix.targets }}
+        run: |
+          set -euo pipefail
           mkdir -p artifacts
-          if [[ "${{ matrix.os }}" == windows* ]]; then
-            cp "target/${{ matrix.target }}/release/clg.exe" "artifacts/clg.exe"
-          else
-            cp "target/${{ matrix.target }}/release/clg" "artifacts/clg.exe"
-            strip "artifacts/clg.exe" || true
-          fi
+          for target in ${TARGETS//,/ }; do
+            case "$target" in
+              *windows*) BIN=clg.exe ;;
+              *) BIN=clg ;;
+            esac
+            if [ ! -f "target/$target/release/$BIN" ]; then
+              echo "Binary '$BIN' not found for $target" >&2
+              ls -la "target/$target/release/" || true
+              exit 1
+            fi
+            case "$target" in
+              # macOS sementara dinonaktifkan.
+              # aarch64-apple-darwin) OUT=clg-darwin-arm64 ;;
+              # x86_64-apple-darwin) OUT=clg-darwin-x64 ;;
+              *) OUT=clg.exe ;;
+            esac
+            cp "target/$target/release/$BIN" "artifacts/$OUT"
+          done
           ls -la artifacts/
 
-      - name: Upload binary
-        uses: actions/upload-artifact@v4
+      - name: Upload binaries
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
-          path: artifacts/clg.exe
+          path: artifacts/
 
+  # Setelah release: asset harus ada sebelum paket npm bisa memasang dirinya.
   publish:
     name: Publish to npm
-    needs: [version, build]
+    needs: [version, build, release]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.branch || github.ref_name }}
           fetch-depth: 0
 
-      - name: Resolve npm_tag from branch
-        id: tag
-        run: |
-          if [ "${{ inputs.branch || github.ref_name }}" = "main" ]; then
-            echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
-          else
-            echo "npm_tag=beta" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Download binaries
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Stage package
-        shell: bash
-        run: |
-          mkdir -p bin
-          cp artifacts/clg-linux-x64/clg.exe bin/commitlg-cli-linux-x64
-          cp artifacts/clg-win32-x64/clg.exe bin/commitlg-cli-win-x64.exe
-          chmod +x bin/commitlg-cli-linux-x64 bin/clg.js
-          ls -la bin/
-
+      # Binary tidak dibundel: postinstall mengunduh asset dari GitHub release.
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
@@ -147,20 +294,56 @@ jobs:
       - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_TAG: ${{ steps.tag.outputs.npm_tag }}
+          NPM_TAG: ${{ needs.version.outputs.tag }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "NPM_TOKEN secret not configured. Skipping publish."
-            exit 0
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN secret is not configured — cannot publish."
+            exit 1
           fi
           VERSION=${VERSION#v}
-          # versi sudah pernah dipublish (mis. sama dengan versi terbaru) → jangan error, skip
-          if npm view "commitlg@${VERSION}" version >/dev/null 2>&1; then
-            echo "Version ${VERSION} already published on npm — skipping publish (not an error)."
-            exit 0
-          fi
-          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          # Auth npm sudah disiapkan setup-node (registry-url + NODE_AUTH_TOKEN).
           npm version "${VERSION}" --no-git-tag-version --allow-same-version
           npm publish --tag "${NPM_TAG}"
+
+  release:
+    name: GitHub Release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      # Nama asset harus sama dengan BINARIES di scripts/install.js.
+      - name: Stage assets
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp artifacts/clg-linux-x64/clg.exe dist/commitlg-cli-linux-x64
+          cp artifacts/clg-win32-x64/clg.exe dist/commitlg-cli-win32-x64.exe
+          # macOS sementara dinonaktifkan.
+          # cp artifacts/clg-mac-darwin/clg-darwin-x64 dist/commitlg-cli-darwin-x64
+          # cp artifacts/clg-mac-darwin/clg-darwin-arm64 dist/commitlg-cli-darwin-arm64
+          chmod +x dist/commitlg-cli-* dist/*.exe
+          ls -la dist/
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+          TAG: ${{ needs.version.outputs.tag }}
+          TARGET: ${{ inputs.branch || github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Job ini tidak checkout repo; -R mencegah gh memanggil git lokal.
+          args=(-R "$REPO" --target "$TARGET" --title "v$VERSION" --generate-notes)
+          if [ "$TAG" = "beta" ]; then
+            args+=(--prerelease)
+          fi
+          gh release create "v$VERSION" "${args[@]}" dist/*

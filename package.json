@@ -4,10 +4,17 @@
   "description": "A simple git commit generator",
   "license": "MIT",
   "bin": {
-    "clg": "./bin/clg.js"
+    "clg": "bin/clg.exe"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "files": [
     "bin",
+    "scripts",
     "README.md",
     "LICENSE"
   ],
