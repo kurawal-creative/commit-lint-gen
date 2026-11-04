@@ -338,9 +338,11 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
           TAG: ${{ needs.version.outputs.tag }}
           TARGET: ${{ inputs.branch || github.ref_name }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          args=(--target "$TARGET" --title "v$VERSION" --generate-notes)
+          # Job ini tidak checkout repo; -R mencegah gh memanggil git lokal.
+          args=(-R "$REPO" --target "$TARGET" --title "v$VERSION" --generate-notes)
           if [ "$TAG" = "beta" ]; then
             args+=(--prerelease)
           fi
