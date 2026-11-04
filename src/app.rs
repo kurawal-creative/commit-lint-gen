@@ -20,4 +20,6 @@ pub struct App {
     pub pending: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     pub rt: tokio::runtime::Runtime,
     pub ticker: std::time::Instant,
+    pub heuristic: bool,
+    pub commit_msg_file: Option<String>,
 }

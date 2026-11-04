@@ -1,35 +1,250 @@
 mod ai;
 mod app;
+mod audit;
+mod doctor;
 mod git;
+mod heuristic;
+mod hooks;
+mod linter;
 mod tui;
 mod types;
+mod update;
 
 use app::{App, AppState};
+use clap::{Parser, Subcommand};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::{cursor, execute};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use std::io;
+use std::io::{self, Write};
 use std::time::Duration;
 
+#[derive(Parser, Debug)]
+#[command(
+    name = "clg",
+    about = "Generate and lint commit messages",
+    disable_version_flag = true
+)]
+struct Cli {
+    /// Print version
+    #[arg(short = 'v', long = "version")]
+    version: bool,
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Generate a commit message from staged changes
+    Generate {
+        /// Commit message file path (automatically filled by git hook)
+        commit_msg_file: Option<String>,
+        /// Auto-commit without interactive prompt
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
+        /// Use heuristic generation instead of AI
+        #[arg(short = 'H', long = "heuristic")]
+        heuristic: bool,
+    },
+    /// Validate a commit message against conventional commit rules
+    Lint {
+        /// Commit message to validate
+        message: String,
+    },
+    /// Install git hook in the current repository
+    Init,
+    /// Remove git hook from the current repository
+    Uninstall,
+    /// Analyze recent commit history for conventional commit compliance
+    Audit {
+        /// Number of commits to analyze
+        #[arg(short = 'n', long = "number", default_value_t = 20)]
+        number: usize,
+    },
+    /// Interactive setup for AI provider configuration
+    Config,
+    /// Check environment, config, and API connection
+    Doctor,
+    /// Check for a newer release and update via npm
+    Update {
+        /// Only check, do not install
+        #[arg(long)]
+        check: bool,
+    },
+}
+
 fn main() -> io::Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.get(1).map(|s| s.as_str()) == Some("config") {
-        return setup_config();
-    } else if args.len() > 1 {
-        eprintln!("Pakai: clg [config]");
+    let cli = Cli::parse();
+    if cli.version {
+        println!("{}", update::version_line());
         return Ok(());
     }
-    let cfg = types::Config::load();
-    if cfg.apiKey.trim().is_empty() {
-        eprintln!("Error: apiKey kosong di ~/.commitlintgenrc.json.");
+    if !matches!(&cli.command, Some(Commands::Update { .. })) {
+        update::auto_update();
+    }
+
+    match cli.command.unwrap_or(Commands::Generate {
+        commit_msg_file: None,
+        yes: false,
+        heuristic: false,
+    }) {
+        Commands::Generate {
+            commit_msg_file,
+            yes,
+            heuristic,
+        } => cmd_generate(commit_msg_file, yes, heuristic),
+        Commands::Lint { message } => {
+            let config = types::Config::load();
+            let errors = linter::validate(&message, &config);
+            if errors.is_empty() {
+                println!("✓ Valid commit message");
+                Ok(())
+            } else {
+                eprintln!("✗ Invalid commit message:\n");
+                for error in errors {
+                    eprintln!("  [{}] {}", error.rule, error.message);
+                }
+                std::process::exit(1);
+            }
+        }
+        Commands::Init => {
+            let cwd = std::env::current_dir()?;
+            match hooks::install(&cwd) {
+                Ok(path) => {
+                    println!("✓ Git hook installed successfully!");
+                    println!("  Location: {}", path);
+                    println!("\nThe hook will validate commit messages automatically.");
+                    println!("To generate commit messages, run: clg");
+                    Ok(())
+                }
+                Err(error) => {
+                    eprintln!("Error installing git hook: {}", error);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Uninstall => {
+            let cwd = std::env::current_dir()?;
+            match hooks::uninstall(&cwd) {
+                Ok(true) => {
+                    println!("✓ Git hook uninstalled successfully!");
+                    Ok(())
+                }
+                Ok(false) => {
+                    println!("No git hook found to uninstall.");
+                    Ok(())
+                }
+                Err(error) => {
+                    eprintln!("Error uninstalling git hook: {}", error);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Audit { number } => {
+            if number < 1 {
+                eprintln!("Error: --number must be a positive integer");
+                std::process::exit(1);
+            }
+            let config = types::Config::load();
+            match audit::analyze(number, &config) {
+                Ok(analyses) => {
+                    print!("{}", audit::format_report(&analyses));
+                    let invalid = analyses.iter().any(|a| !a.is_valid());
+                    if invalid {
+                        std::process::exit(1);
+                    }
+                    Ok(())
+                }
+                Err(error) => {
+                    eprintln!("Error analyzing commit history: {}", error);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Config => setup_config(),
+        Commands::Doctor => {
+            let config = types::Config::load();
+            doctor::run(&config);
+            Ok(())
+        }
+        Commands::Update { check } => match update::run(check) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                eprintln!("Error: {}", error);
+                std::process::exit(1);
+            }
+        },
+    }
+}
+
+fn cmd_generate(commit_msg_file: Option<String>, yes: bool, heuristic: bool) -> io::Result<()> {
+    let config = types::Config::load();
+    let offline = heuristic || config.apiKey.trim().is_empty();
+
+    if yes {
+        let message = if offline {
+            heuristic::generate()
+        } else {
+            let diff = match git::staged_diff(&config) {
+                Ok(diff) => diff,
+                Err(error) => {
+                    eprintln!("Error: {}", error);
+                    return Ok(());
+                }
+            };
+            generate_ai(&config, &diff, None)
+        };
+        return deliver(&message, commit_msg_file);
+    }
+
+    run_tui(config, commit_msg_file, heuristic)
+}
+
+fn deliver(message: &str, commit_msg_file: Option<String>) -> io::Result<()> {
+    if let Some(path) = commit_msg_file {
+        std::fs::write(&path, format!("{}\n", message))?;
+        print_leftover(message);
         return Ok(());
     }
-    let diff = match git::staged_diff() {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("Error: {}", e);
+    git::commit(message).map_err(io::Error::other)?;
+    println!("Committed: {}", message);
+    println!("\nDon't forget to push your commits!");
+    Ok(())
+}
+
+fn generate_ai(config: &types::Config, diff: &str, previous: Option<&str>) -> String {
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("Runtime error: {}. Memakai heuristic.", error);
+            return heuristic::generate();
+        }
+    };
+    runtime
+        .block_on(ai::generate_commit(
+            diff,
+            &config.apiKey,
+            &config.baseURL,
+            &config.model,
+            config.is_indo(),
+            previous,
+        ))
+        .unwrap_or_else(|error| {
+            eprintln!("AI generation failed: {}. Memakai heuristic.", error);
+            heuristic::generate()
+        })
+}
+
+fn run_tui(
+    config: types::Config,
+    commit_msg_file: Option<String>,
+    heuristic: bool,
+) -> io::Result<()> {
+    let diff = match git::staged_diff(&config) {
+        Ok(diff) => diff,
+        Err(error) => {
+            eprintln!("Error: {}", error);
             return Ok(());
         }
     };
@@ -45,16 +260,18 @@ fn main() -> io::Result<()> {
         commit_msg: String::new(),
         edit_input: String::new(),
         edit_cursor: 0,
-        model: cfg.model.clone(),
-        base_url: cfg.baseURL.clone(),
-        api_key: cfg.apiKey.clone(),
-        is_indo: cfg.language.to_lowercase().starts_with("id"),
+        model: config.model.clone(),
+        base_url: config.baseURL.clone(),
+        api_key: config.apiKey.clone(),
+        is_indo: config.is_indo(),
         selected_option: 0,
         state: AppState::Loading("Membuat pesan commit...".into()),
         diff,
         pending: None,
         rt,
         ticker: std::time::Instant::now(),
+        heuristic,
+        commit_msg_file,
     };
 
     spawn_generate(&mut app);
@@ -119,7 +336,6 @@ fn main() -> io::Result<()> {
 }
 
 fn setup_config() -> io::Result<()> {
-    use std::io::Write;
     let mut cfg = types::Config::load();
     let ask = |label: &str, cur: &str| -> io::Result<String> {
         if cur.is_empty() {
@@ -165,10 +381,25 @@ fn spawn_generate(app: &mut App) {
     let base = app.base_url.clone();
     let model = app.model.clone();
     let is_indo = app.is_indo;
+    let offline = app.heuristic || key.trim().is_empty();
+    let previous = if app.commit_msg.trim().is_empty() {
+        None
+    } else {
+        Some(app.commit_msg.clone())
+    };
     app.pending = Some(rx);
 
     app.rt.spawn(async move {
-        let result = ai::generate_commit(&diff, &key, &base, &model, is_indo).await;
+        let result = if offline {
+            Ok(heuristic::generate())
+        } else {
+            match ai::generate_commit(&diff, &key, &base, &model, is_indo, previous.as_deref())
+                .await
+            {
+                Ok(message) => Ok(message),
+                Err(_) => Ok(heuristic::generate()),
+            }
+        };
         let _ = tx.send(result);
     });
 }
@@ -187,12 +418,7 @@ fn handle_menu(key: &KeyCode, app: &mut App) {
         }
         KeyCode::Enter => match app.selected_option {
             0 => {
-                if let Err(e) = git::commit(&app.commit_msg) {
-                    eprintln!("Error: {}", e);
-                } else {
-                    println!("✅ Commit berhasil!");
-                }
-                app.state = AppState::Quit;
+                finish_commit(app);
             }
             1 => {
                 app.edit_input = app.commit_msg.clone();
@@ -247,6 +473,20 @@ fn handle_menu(key: &KeyCode, app: &mut App) {
     }
 }
 
+fn finish_commit(app: &mut App) {
+    if let Some(path) = app.commit_msg_file.clone() {
+        match std::fs::write(&path, format!("{}\n", app.commit_msg)) {
+            Ok(()) => println!("Commit message ditulis ke {}", path),
+            Err(error) => eprintln!("Error: {}", error),
+        }
+    } else if let Err(error) = git::commit(&app.commit_msg) {
+        eprintln!("Error: {}", error);
+    } else {
+        println!("✅ Commit berhasil!");
+    }
+    app.state = AppState::Quit;
+}
+
 fn handle_input(key: &KeyCode, app: &mut App) -> io::Result<()> {
     // ponytail: cursor dalam char (bukan byte) biar unicode aman
     let len = app.edit_input.chars().count();
@@ -256,12 +496,7 @@ fn handle_input(key: &KeyCode, app: &mut App) -> io::Result<()> {
             if !app.edit_input.trim().is_empty() {
                 app.commit_msg = app.edit_input.clone();
                 if matches!(app.state, AppState::Manual) {
-                    if let Err(e) = git::commit(&app.commit_msg) {
-                        eprintln!("Error: {}", e);
-                    } else {
-                        println!("✅ Commit berhasil!");
-                    }
-                    app.state = AppState::Quit;
+                    finish_commit(app);
                     return Ok(());
                 }
             }
@@ -373,4 +608,85 @@ fn cleanup(terminal: &mut Terminal<CrosstermBackend<&mut io::Stdout>>) -> io::Re
     )?;
     execute!(terminal.backend_mut(), cursor::Show)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(args)
+    }
+
+    #[test]
+    fn cli_definition_is_valid() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn no_args_defaults_to_generate() {
+        let cli = parse(&["clg"]).unwrap();
+        assert!(cli.command.is_none());
+        assert!(!cli.version);
+    }
+
+    #[test]
+    fn parses_generate_flags() {
+        let cli = parse(&["clg", "generate", "-y", "-H", "msg.txt"]).unwrap();
+        match cli.command {
+            Some(Commands::Generate {
+                commit_msg_file,
+                yes,
+                heuristic,
+            }) => {
+                assert_eq!(commit_msg_file.as_deref(), Some("msg.txt"));
+                assert!(yes);
+                assert!(heuristic);
+            }
+            _ => panic!("expected generate command"),
+        }
+    }
+
+    #[test]
+    fn parses_lint_audit_and_version() {
+        assert!(matches!(
+            parse(&["clg", "lint", "feat: add x"]).unwrap().command,
+            Some(Commands::Lint { .. })
+        ));
+        match parse(&["clg", "audit", "-n", "5"]).unwrap().command {
+            Some(Commands::Audit { number }) => assert_eq!(number, 5),
+            _ => panic!("expected audit"),
+        }
+        assert!(parse(&["clg", "-v"]).unwrap().version);
+        assert!(parse(&["clg", "--version"]).unwrap().version);
+    }
+
+    #[test]
+    fn parses_init_uninstall_config_doctor() {
+        for (arg, expected) in [
+            ("init", "init"),
+            ("uninstall", "uninstall"),
+            ("config", "config"),
+            ("doctor", "doctor"),
+            ("update", "update"),
+        ] {
+            let cli = parse(&["clg", arg]).unwrap();
+            let matched = matches!(
+                (&cli.command, expected),
+                (Some(Commands::Init), "init")
+                    | (Some(Commands::Uninstall), "uninstall")
+                    | (Some(Commands::Config), "config")
+                    | (Some(Commands::Doctor), "doctor")
+                    | (Some(Commands::Update { .. }), "update")
+            );
+            assert!(matched, "failed to parse {}", arg);
+        }
+    }
+
+    #[test]
+    fn help_is_available() {
+        let error = parse(&["clg", "--help"]).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
+    }
 }

@@ -2,9 +2,9 @@
 /target
 target/
 
-# Binary assets shipped via npm (placed by CI)
-/bin/clg-linux-x64
-/bin/clg-win32-x64.exe
+# Binary assets shipped via npm (placed by CI / postinstall)
+/bin/clg.exe
+/bin/commitlg-cli-*
 
 # Misc
 .DS_Store
