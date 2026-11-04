@@ -37,6 +37,24 @@ const binDir = path.join(__dirname, '..', 'bin');
 const source = path.join(binDir, binary);
 const target = path.join(binDir, 'clg.exe');
 
+// Magic bytes: pastikan yang terunduh benar-benar executable, bukan halaman error.
+const MAGIC = {
+  linux: [[0x7f, 0x45, 0x4c, 0x46]],
+  win32: [[0x4d, 0x5a]],
+  darwin: [
+    [0xcf, 0xfa, 0xed, 0xfe],
+    [0xce, 0xfa, 0xed, 0xfe],
+    [0xca, 0xfe, 0xba, 0xbe],
+  ],
+};
+
+function isExpectedBinary(file) {
+  const head = fs.readFileSync(file).subarray(0, 4);
+  return (MAGIC[process.platform] || []).some((magic) =>
+    magic.every((byte, i) => head[i] === byte),
+  );
+}
+
 async function save(response, url) {
   if (!response.ok) {
     fail(`download failed (${response.status}): ${url}`);
@@ -44,6 +62,10 @@ async function save(response, url) {
   fs.mkdirSync(binDir, { recursive: true });
   const tmp = `${target}.tmp`;
   await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(tmp));
+  if (!isExpectedBinary(tmp)) {
+    fs.rmSync(tmp, { force: true });
+    fail(`downloaded file is not a valid ${process.platform} executable: ${url}`);
+  }
   fs.renameSync(tmp, target);
 }
 

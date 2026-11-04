@@ -2,8 +2,7 @@
 /target
 target/
 
-# Binary assets shipped via npm (placed by CI / postinstall)
-/bin/clg.exe
+# Binary hasil build (bin/clg.exe di-commit sebagai placeholder agar shim npm dibuat)
 /bin/commitlg-cli-*
 
 # Misc
