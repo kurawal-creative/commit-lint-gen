@@ -17,9 +17,8 @@ const VERSION = require('../package.json').version;
 const BINARIES = {
   'linux-x64': 'commitlg-cli-linux-x64',
   'win32-x64': 'commitlg-cli-win32-x64.exe',
-  // macOS sementara dinonaktifkan.
-  // 'darwin-x64': 'commitlg-cli-darwin-x64',
-  // 'darwin-arm64': 'commitlg-cli-darwin-arm64',
+  'darwin-x64': 'commitlg-cli-darwin-x64',
+  'darwin-arm64': 'commitlg-cli-darwin-arm64',
 };
 
 function fail(message) {
