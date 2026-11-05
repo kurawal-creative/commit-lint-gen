@@ -39,7 +39,7 @@ fn without_build_assets(text: &str) -> (String, usize) {
     let mut kept = Vec::new();
     let mut skipped = 0;
     for line in text.lines() {
-        let path = line.split('\t').last().unwrap_or("");
+        let path = line.split('\t').next_back().unwrap_or("");
         if is_build_asset(path) {
             skipped += 1;
         } else {
